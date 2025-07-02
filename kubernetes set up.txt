@@ -1,0 +1,1512 @@
+# ON ALL NODES WE CAN THE NEXT COMMANDS:
+
+# THESE FIRST PART INTALLS CRI-O THE CONTAINER RUNTIME INTERFACE THAT KUBERNETES WILL USE. IT'S COMPATIBLE WITH DOCKER HUB IMAGES.
+
+# Kubernetes Variable Declaration
+
+KUBERNETES_VERSION=v1.32
+CRIO_VERSION=v1.32
+
+# Apply sysctl params without reboot
+sudo sysctl --system
+
+sudo apt-get update -y
+sudo apt-get install -y apt-transport-https ca-certificates curl gpg
+
+## Install CRIO Runtime
+
+sudo apt-get update -y
+apt-get install -y software-properties-common curl apt-transport-https ca-certificates
+
+
+curl -fsSL https://pkgs.k8s.io/addons:/cri-o:/stable:/$CRIO_VERSION/deb/Release.key |
+    gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://pkgs.k8s.io/addons:/cri-o:/stable:/$CRIO_VERSION/deb/ /" |
+    tee /etc/apt/sources.list.d/cri-o.list
+
+
+sudo apt-get update -y
+sudo apt-get install -y cri-o
+
+sudo systemctl daemon-reload
+sudo systemctl enable crio --now
+sudo systemctl start crio.service
+
+echo "CRI runtime installed susccessfully"
+
+# NOW WE INSTALL KUBECTL, KUBEADM, AND KUBELET ON ALL NODES.
+
+KUBERNETES_VERSION=v1.32
+
+curl -fsSL https://pkgs.k8s.io/core:/stable:/$KUBERNETES_VERSION/deb/Release.key |
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/$KUBERNETES_VERSION/deb/ /" |
+    tee /etc/apt/sources.list.d/kubernetes.list 
+
+sudo apt-get update -y
+
+KUBERNETES_INSTALL_VERSION=1.32.5-1.1
+
+sudo apt-get install -y kubelet="$KUBERNETES_INSTALL_VERSION" kubectl="$KUBERNETES_INSTALL_VERSION" kubeadm="$KUBERNETES_INSTALL_VERSION"
+
+# NOW WE DRAW EACH OF THE IPs FOR ALL NODES RUNNING THIS COMMAND ON EACH NODE:
+
+sudo apt-get install -y jq
+
+local_ip="$(ip --json addr show eth0 | jq -r '.[0].addr_info[] | select(.family == "inet") | .local')"
+
+cat > /etc/default/kubelet << EOF
+
+KUBELET_EXTRA_ARGS=--node-ip=$local_ip
+
+EOF
+
+# NOW WE CREATE THE kube.config FILE THAT WILL CONTAIN CLUSTER CONFIGURATION:
+
+vi kubeadm.config
+
+# INSIDE THE FILE WE CAT THE FOLLOWING INFO:
+
+ apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "192.168.1.150"
+  bindPort: 6443
+nodeRegistration:
+  name: "controlplane"
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: "v1.32.0"
+controlPlaneEndpoint: "192.168.1.150:6443"
+apiServer:
+  extraArgs:
+    - name: "enable-admission-plugins"
+      value: "NodeRestriction"
+    - name: "audit-log-path"
+      value: "/var/log/kubernetes/audit.log"
+controllerManager:
+  extraArgs:
+    - name: "node-cidr-mask-size"
+      value: "24"
+scheduler:
+  extraArgs:
+    - name: "leader-elect"
+      value: "true"
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+  dnsDomain: "cluster.local"
+
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: "systemd"
+syncFrequency: "1m"
+
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "ipvs"
+conntrack:
+  maxPerCore: 32768
+  min: 131072
+  tcpCloseWaitTimeout: "1h"
+  tcpEstablishedTimeout: "24h"
+
+# IN MY CASE I'VE USED DHCP Binding to ASSIGN THE VM ACTING AS CONTROLPLANE INSIDE MY LAPTOP THE PERMANENT IP 192.168.1.150, THW VM HAS ACCESS TO THE LOCAL NETWORK POWERRED BY MY WIFI 
+# ROUTER THANKS TO A BRIDGE ADAPTER. FINALLY WE RUN THE COMMAND:
+
+sudo kubeadm init --config=kubeadm.config
+
+# IF WE WANT TO RESET THE CLUSTER DEPLOYMENT MADE WITH kubeadm init WE CAN DO IT LIKE THAT 
+
+# Reset kubeadm and clean configuration
+sudo kubeadm reset --force
+
+# Delete kubeconfig from current user
+sudo rm -rf ~/.kube
+
+# Eliminar configuración de red CNI
+sudo rm -rf /etc/cni/net.d
+
+# Eliminar todos los contenedores y pods
+sudo crictl rm --all
+sudo crictl rmi --prune
+
+vi kubeadm.config
+
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "192.168.1.150"
+  bindPort: 6443
+nodeRegistration:
+  name: "controlplane"
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: "v1.32.0"
+controlPlaneEndpoint: "192.168.1.150:6443"
+apiServer:
+  extraArgs:
+    - name: "enable-admission-plugins"
+      value: "NodeRestriction"
+    - name: "audit-log-path"
+      value: "/var/log/kubernetes/audit.log"
+controllerManager:
+  extraArgs:
+    - name: "node-cidr-mask-size"
+      value: "24"
+scheduler:
+  extraArgs:
+    - name: "leader-elect"
+      value: "true"
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+  dnsDomain: "cluster.local"
+
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: "systemd"
+syncFrequency: "1m"
+
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "ipvs"
+conntrack:
+  maxPerCore: 32768
+  min: 131072
+  tcpCloseWaitTimeout: "1h"
+  tcpEstablishedTimeout: "24h"
+
+# WE CHANGE THE INFO IN THE FILE AND THEN REUSE THIS NEW CONFIGURATION FILE USING THE FOLLOWING COMMAND AGAIN:
+
+sudo kubeadm init --config=kubeadm.config
+
+Thats controlplane's session at 13/06/2025:
+
+Windows PowerShell
+Copyright (C) Microsoft Corporation. Todos los derechos reservados.
+
+Instale la versión más reciente de PowerShell para obtener nuevas características y mejoras. https://aka.ms/PSWindows
+
+PS C:\Users\Usuario> ssh vboxuser@192.168.1.150
+ssh: connect to host 192.168.1.150 port 22: Connection timed out
+PS C:\Users\Usuario> ssh vboxuser@192.168.1.150
+The authenticity of host '192.168.1.150 (192.168.1.150)' can't be established.
+ED25519 key fingerprint is SHA256:+JA6XXfS3NZ4cAHm1Lyb7ZQMKzPeHTtS4IqBPg8Lf+s.
+This host key is known by the following other names/addresses:
+    C:\Users\Usuario/.ssh/known_hosts:2: 192.168.1.139
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '192.168.1.150' (ED25519) to the list of known hosts.
+vboxuser@192.168.1.150's password:
+Welcome to Ubuntu 24.04.2 LTS (GNU/Linux 6.8.0-60-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Fri Jun 13 01:27:51 PM UTC 2025
+
+  System load:  2.74              Processes:               239
+  Usage of /:   3.9% of 97.87GB   Users logged in:         0
+  Memory usage: 3%                IPv4 address for enp0s3: 192.168.1.150
+  Swap usage:   0%
+
+
+Expanded Security Maintenance for Applications is not enabled.
+
+52 updates can be applied immediately.
+To see these additional updates run: apt list --upgradable
+
+Enable ESM Apps to receive additional future security updates.
+See https://ubuntu.com/esm or run: sudo pro status
+
+
+Last login: Fri Jun 13 03:16:44 2025 from 192.168.1.130
+vboxuser@controlplane:~$ vi kubeadm.config
+vboxuser@controlplane:~$ sudo kubeadm init --config=kubeadm.config
+[sudo] password for vboxuser:
+[init] Using Kubernetes version: v1.32.0
+[preflight] Running pre-flight checks
+error execution phase preflight: [preflight] Some fatal errors occurred:
+        [ERROR Port-6443]: Port 6443 is in use
+        [ERROR Port-10259]: Port 10259 is in use
+        [ERROR Port-10257]: Port 10257 is in use
+        [ERROR FileAvailable--etc-kubernetes-manifests-kube-apiserver.yaml]: /etc/kubernetes/manifests/kube-apiserver.yaml already exists
+        [ERROR FileAvailable--etc-kubernetes-manifests-kube-controller-manager.yaml]: /etc/kubernetes/manifests/kube-controller-manager.yaml already exists
+        [ERROR FileAvailable--etc-kubernetes-manifests-kube-scheduler.yaml]: /etc/kubernetes/manifests/kube-scheduler.yaml already exists
+        [ERROR FileAvailable--etc-kubernetes-manifests-etcd.yaml]: /etc/kubernetes/manifests/etcd.yaml already exists
+        [ERROR Port-10250]: Port 10250 is in use
+        [ERROR DirAvailable--var-lib-etcd]: /var/lib/etcd is not empty
+[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`
+To see the stack trace of this error execute with --v=5 or higher
+vboxuser@controlplane:~$ # Resetear kubeadm y limpiar configuración
+sudo kubeadm reset --force
+
+# Eliminar el kubeconfig del usuario actual
+sudo rm -rf ~/.kube
+
+# Eliminar configuración de red CNI
+sudo rm -rf /etc/cni/net.d
+
+# Eliminar todos los contenedores y pods (para containerd)
+sudo crictl rm --all
+sudo crictl rmi --prune
+
+# Si usas Docker en lugar de containerd/cri-o, usa esto en su lugar:
+# sudo docker system prune -af
+[reset] Reading configuration from the "kubeadm-config" ConfigMap in namespace "kube-system"...
+[reset] Use 'kubeadm init phase upload-config --config your-config.yaml' to re-upload it.
+W0613 13:33:48.183475    1590 reset.go:143] [reset] Unable to fetch the kubeadm-config ConfigMap from cluster: failed to get config map: Get "https://controlplane:6443/api/v1/namespaces/kube-system/configmaps/kubeadm-config?timeout=10s": dial tcp 192.168.1.100:6443: connect: no route to host
+[preflight] Running pre-flight checks
+W0613 13:33:48.183634    1590 removeetcdmember.go:106] [reset] No kubeadm config, using etcd pod spec to get data directory
+[reset] Deleted contents of the etcd data directory: /var/lib/etcd
+[reset] Stopping the kubelet service
+[reset] Unmounting mounted directories in "/var/lib/kubelet"
+[reset] Deleting contents of directories: [/etc/kubernetes/manifests /var/lib/kubelet /etc/kubernetes/pki]
+[reset] Deleting files: [/etc/kubernetes/admin.conf /etc/kubernetes/super-admin.conf /etc/kubernetes/kubelet.conf /etc/kubernetes/bootstrap-kubelet.conf /etc/kubernetes/controller-manager.conf /etc/kubernetes/scheduler.conf]
+
+The reset process does not clean CNI configuration. To do so, you must remove /etc/cni/net.d
+
+The reset process does not reset or clean up iptables rules or IPVS tables.
+If you wish to reset iptables, you must do so manually by using the "iptables" command.
+
+If your cluster was setup to utilize IPVS, run ipvsadm --clear (or similar)
+to reset your system's IPVS tables.
+
+The reset process does not clean your kubeconfig files and you must remove them manually.
+Please, check the contents of the $HOME/.kube/config file.
+INFO[0000] No containers to remove
+Deleted: registry.k8s.io/kube-controller-manager:v1.32.5
+Deleted: registry.k8s.io/kube-proxy:v1.32.5
+Deleted: registry.k8s.io/etcd:3.5.16-0
+Deleted: registry.k8s.io/kube-apiserver:v1.32.0
+E0613 13:33:54.741901    1638 log.go:32] "RemoveImage from image service failed" err="rpc error: code = DeadlineExceeded desc = context deadline exceeded" image="c69fa2e9cbf5f42dc48af631e956d3f95724c13f91596bc567591790e5e36db6"
+E0613 13:33:54.757447    1638 log.go:32] "RemoveImage from image service failed" err="rpc error: code = DeadlineExceeded desc = context deadline exceeded" image="2729fb488407e634105c62238a45a599db1692680526e20844060a7a8197b45a"
+E0613 13:33:54.757510    1638 log.go:32] "RemoveImage from image service failed" err="rpc error: code = DeadlineExceeded desc = context deadline exceeded" image="495c5ce47cf7c8b58655ef50d0f0a9b43c5ae18492059dc9af4c9aacae82a5a4"
+vboxuser@controlplane:~$ sudo crictl images
+IMAGE                   TAG                 IMAGE ID            SIZE
+registry.k8s.io/pause   3.10                873ed75102791       742kB
+vboxuser@controlplane:~$ sudo crictl rmi 873ed75102791
+Deleted: registry.k8s.io/pause:3.10
+vboxuser@controlplane:~$ sudo kubeadm init --config=kubeadmin.config
+unable to read config from "kubeadmin.config" : open kubeadmin.config: no such file or directory
+To see the stack trace of this error execute with --v=5 or higher
+vboxuser@controlplane:~$ sudo kubeadm init --config=kubeadmn.config
+unable to read config from "kubeadmn.config" : open kubeadmn.config: no such file or directory
+To see the stack trace of this error execute with --v=5 or higher
+vboxuser@controlplane:~$ vi kubeadmn.config
+
+[1]+  Stopped                 vi kubeadmn.config
+vboxuser@controlplane:~$ vi kubeadmn.config
+
+[2]+  Stopped                 vi kubeadmn.config
+vboxuser@controlplane:~$ sudo -rm kubeadmn.config
+sudo: kubeadmn.config: command not found
+vboxuser@controlplane:~$ sudo rm kubeadmn.config
+rm: cannot remove 'kubeadmn.config': No such file or directory
+vboxuser@controlplane:~$ kill %1
+
+[1]-  Stopped                 vi kubeadmn.config
+vboxuser@controlplane:~$ jobs
+[1]-  Stopped                 vi kubeadmn.config
+[2]+  Stopped                 vi kubeadmn.config
+vboxuser@controlplane:~$ kill %2
+
+[2]+  Stopped                 vi kubeadmn.config
+vboxuser@controlplane:~$ kill %1
+
+[1]-  Stopped                 vi kubeadmn.config
+
+[2]+  Stopped                 vi kubeadmn.config
+vboxuser@controlplane:~$ kill %[1]
+-bash: kill: %[1]: no such job
+
+[1]+  Stopped                 vi kubeadmn.config
+vboxuser@controlplane:~$ ps aux | grep vi
+vboxuser    1705  0.0  0.1  24768 13184 pts/0    Tl   13:38   0:00 vi kubeadmn.config
+vboxuser    1711  0.0  0.1  24768 13184 pts/0    Tl   13:40   0:00 vi kubeadmn.config
+vboxuser    1730 33.3  0.0   6544  2304 pts/0    S+   13:43   0:00 grep --color=auto vi
+vboxuser@controlplane:~$ kill %1705
+-bash: kill: %1705: no such job
+vboxuser@controlplane:~$ kill %24768
+-bash: kill: %24768: no such job
+vboxuser@controlplane:~$ kill %13184
+-bash: kill: %13184: no such job
+vboxuser@controlplane:~$ kill -9 1705
+vboxuser@controlplane:~$ ps aux | grep vi
+vboxuser    1711  0.0  0.1  24768 13184 pts/0    Tl   13:40   0:00 vi kubeadmn.config
+vboxuser    1744  0.0  0.0   6544  2304 pts/0    S+   13:53   0:00 grep --color=auto vi
+[1]+  Killed                  vi kubeadmn.config
+vboxuser@controlplane:~$ kill -9 1711
+vboxuser@controlplane:~$ kill -9 1744
+-bash: kill: (1744) - No such process
+[2]+  Killed                  vi kubeadmn.config
+vboxuser@controlplane:~$ ps aux | grep vi
+vboxuser    1746  100  0.0   6544  2304 pts/0    S+   13:54   0:00 grep --color=auto vi
+vboxuser@controlplane:~$ kill -9 1746
+-bash: kill: (1746) - No such process
+vboxuser@controlplane:~$ ps aux | grep vi
+vboxuser    1748 75.0  0.0   6544  2304 pts/0    S+   13:54   0:00 grep --color=auto vi
+vboxuser@controlplane:~$ vi kubeadmn.config
+vboxuser@controlplane:~$ vi kubeadmn.config
+vboxuser@controlplane:~$ sudo kubeadm init --config=kubeadm.config
+[sudo] password for vboxuser:
+[init] Using Kubernetes version: v1.32.0
+[preflight] Running pre-flight checks
+[preflight] Pulling images required for setting up a Kubernetes cluster
+[preflight] This might take a minute or two, depending on the speed of your internet connection
+[preflight] You can also perform this action beforehand using 'kubeadm config images pull'
+^[[A^[[[certs] Using certificateDir folder "/etc/kubernetes/pki"
+[certs] Generating "ca" certificate and key
+[certs] Generating "apiserver" certificate and key
+[certs] apiserver serving cert is signed for DNS names [controlplane kubernetes kubernetes.default kubernetes.default.svc kubernetes.default.svc.cluster.local] and IPs [10.96.0.1 192.168.1.150]
+[certs] Generating "apiserver-kubelet-client" certificate and key
+[certs] Generating "front-proxy-ca" certificate and key
+[certs] Generating "front-proxy-client" certificate and key
+[certs] Generating "etcd/ca" certificate and key
+[certs] Generating "etcd/server" certificate and key
+[certs] etcd/server serving cert is signed for DNS names [controlplane localhost] and IPs [192.168.1.150 127.0.0.1 ::1]
+[certs] Generating "etcd/peer" certificate and key
+[certs] etcd/peer serving cert is signed for DNS names [controlplane localhost] and IPs [192.168.1.150 127.0.0.1 ::1]
+[certs] Generating "etcd/healthcheck-client" certificate and key
+[certs] Generating "apiserver-etcd-client" certificate and key
+[certs] Generating "sa" key and public key
+[kubeconfig] Using kubeconfig folder "/etc/kubernetes"
+[kubeconfig] Writing "admin.conf" kubeconfig file
+[kubeconfig] Writing "super-admin.conf" kubeconfig file
+[kubeconfig] Writing "kubelet.conf" kubeconfig file
+[kubeconfig] Writing "controller-manager.conf" kubeconfig file
+[kubeconfig] Writing "scheduler.conf" kubeconfig file
+[etcd] Creating static Pod manifest for local etcd in "/etc/kubernetes/manifests"
+[control-plane] Using manifest folder "/etc/kubernetes/manifests"
+[control-plane] Creating static Pod manifest for "kube-apiserver"
+[control-plane] Creating static Pod manifest for "kube-controller-manager"
+[control-plane] Creating static Pod manifest for "kube-scheduler"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Starting the kubelet
+[wait-control-plane] Waiting for the kubelet to boot up the control plane as static Pods from directory "/etc/kubernetes/manifests"
+[kubelet-check] Waiting for a healthy kubelet at http://127.0.0.1:10248/healthz. This can take up to 4m0s
+[kubelet-check] The kubelet is healthy after 2.542124537s
+[api-check] Waiting for a healthy API server. This can take up to 4m0s
+[api-check] The API server is healthy after 2m0.618262848s
+[upload-config] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
+[kubelet] Creating a ConfigMap "kubelet-config" in namespace kube-system with the configuration for the kubelets in the cluster
+[upload-certs] Skipping phase. Please see --upload-certs
+[mark-control-plane] Marking the node controlplane as control-plane by adding the labels: [node-role.kubernetes.io/control-plane node.kubernetes.io/exclude-from-external-load-balancers]
+[mark-control-plane] Marking the node controlplane as control-plane by adding the taints [node-role.kubernetes.io/control-plane:NoSchedule]
+[bootstrap-token] Using token: rspsyp.p1aovt3zgx9wzatp
+[bootstrap-token] Configuring bootstrap tokens, cluster-info ConfigMap, RBAC Roles
+[bootstrap-token] Configured RBAC rules to allow Node Bootstrap tokens to get nodes
+[bootstrap-token] Configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
+[bootstrap-token] Configured RBAC rules to allow the csrapprover controller automatically approve CSRs from a Node Bootstrap Token
+[bootstrap-token] Configured RBAC rules to allow certificate rotation for all node client certificates in the cluster
+[bootstrap-token] Creating the "cluster-info" ConfigMap in the "kube-public" namespace
+[kubelet-finalize] Updating "/etc/kubernetes/kubelet.conf" to point to a rotatable kubelet client certificate and key
+[addons] Applied essential addon: CoreDNS
+[addons] Applied essential addon: kube-proxy
+
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+Alternatively, if you are the root user, you can run:
+
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+You can now join any number of control-plane nodes by copying certificate authorities
+and service account keys on each node and then running the following as root:
+
+  kubeadm join 192.168.1.150:6443 --token rspsyp.p1aovt3zgx9wzatp \
+        --discovery-token-ca-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67 \
+        --control-plane
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 192.168.1.150:6443 --token rspsyp.p1aovt3zgx9wzatp \
+        --discovery-token-ca-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+vboxuser@controlplane:~$   mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS     ROLES           AGE   VERSION
+controlplane   NotReady   control-plane   11m   v1.32.5
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS     ROLES           AGE   VERSION
+controlplane   NotReady   control-plane   11m   v1.32.5
+vboxuser@controlplane:~$ kubectl get po -n kube-system
+NAME                                   READY   STATUS    RESTARTS   AGE
+coredns-668d6bf9bc-76g9f               0/1     Pending   0          10m
+coredns-668d6bf9bc-ftdf6               0/1     Pending   0          10m
+etcd-controlplane                      1/1     Running   0          12m
+kube-apiserver-controlplane            1/1     Running   0          12m
+kube-controller-manager-controlplane   1/1     Running   1          12m
+kube-proxy-q2qxn                       1/1     Running   0          10m
+kube-scheduler-controlplane            1/1     Running   0          12m
+vboxuser@controlplane:~$ kubectl get --raw='/readyz?verbose'
+[+]ping ok
+[+]log ok
+[+]etcd ok
+[+]etcd-readiness ok
+[+]informer-sync ok
+[+]poststarthook/start-apiserver-admission-initializer ok
+[+]poststarthook/generic-apiserver-start-informers ok
+[+]poststarthook/priority-and-fairness-config-consumer ok
+[+]poststarthook/priority-and-fairness-filter ok
+[+]poststarthook/storage-object-count-tracker-hook ok
+[+]poststarthook/start-apiextensions-informers ok
+[+]poststarthook/start-apiextensions-controllers ok
+[+]poststarthook/crd-informer-synced ok
+[+]poststarthook/start-system-namespaces-controller ok
+[+]poststarthook/start-cluster-authentication-info-controller ok
+[+]poststarthook/start-kube-apiserver-identity-lease-controller ok
+[+]poststarthook/start-kube-apiserver-identity-lease-garbage-collector ok
+[+]poststarthook/start-legacy-token-tracking-controller ok
+[+]poststarthook/start-service-ip-repair-controllers ok
+[+]poststarthook/rbac/bootstrap-roles ok
+[+]poststarthook/scheduling/bootstrap-system-priority-classes ok
+[+]poststarthook/priority-and-fairness-config-producer ok
+[+]poststarthook/bootstrap-controller ok
+[+]poststarthook/aggregator-reload-proxy-client-cert ok
+[+]poststarthook/start-kube-aggregator-informers ok
+[+]poststarthook/apiservice-status-local-available-controller ok
+[+]poststarthook/apiservice-status-remote-available-controller ok
+[+]poststarthook/apiservice-registration-controller ok
+[+]poststarthook/apiservice-discovery-controller ok
+[+]poststarthook/kube-apiserver-autoregistration ok
+[+]autoregister-completion ok
+[+]poststarthook/apiservice-openapi-controller ok
+[+]poststarthook/apiservice-openapiv3-controller ok
+[+]shutdown ok
+readyz check passed
+vboxuser@controlplane:~$ kubectl cluster-info
+Kubernetes control plane is running at https://192.168.1.150:6443
+CoreDNS is running at https://192.168.1.150:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+vboxuser@controlplane:~$ kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+node/controlplane untainted
+vboxuser@controlplane:~$ sudo nano /etc/fstab
+[sudo] password for vboxuser:
+vboxuser@controlplane:~$ suda swapoff -a
+Command 'suda' not found, did you mean:
+  command 'sudo' from deb sudo (1.9.14p2-1ubuntu1)
+  command 'sudo' from deb sudo-ldap (1.9.14p2-1ubuntu1)
+  command 'sada' from deb plc-utils-extra (0.0.6+git20230504.1ba7d5a0-1)
+Try: sudo apt install <deb name>
+vboxuser@controlplane:~$ sudo swapoff -a
+vboxuser@controlplane:~$ kubeadm token create --print-join-command
+kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS     ROLES           AGE     VERSION
+controlplane   NotReady   control-plane   53m     v1.32.5
+ubuntu         NotReady   <none>          6m52s   v1.32.5
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS     ROLES           AGE   VERSION
+controlplane   NotReady   control-plane   59m   v1.32.5
+ubuntu         NotReady   <none>          13m   v1.32.5
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS     ROLES           AGE   VERSION
+controlplane   NotReady   control-plane   63m   v1.32.5
+ubuntu         NotReady   <none>          16m   v1.32.5
+ubuntu2        NotReady   <none>          18s   v1.32.5
+vboxuser@controlplane:~$ kubectl label node ubuntu node-role.kubernetes.io/w
+orker=worker
+node/ubuntu labeled
+vboxuser@controlplane:~$ kubectl label node ubuntu2 node-role.kubernetes.io/
+worker=worker
+node/ubuntu2 labeled
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS     ROLES           AGE     VERSION
+controlplane   NotReady   control-plane   67m     v1.32.5
+ubuntu         NotReady   worker          20m     v1.32.5
+ubuntu2        NotReady   worker          4m10s   v1.32.5
+
+# THE NODES ARE NOT READY BECASUE THERE'S NO CONTAINER NETWORK INTERFACE, WE WILL USE CALICO FOR THAT MATTER, WITH THE FOLLOWING COMMANDS:
+
+# WE DOWNLOAD TIGERA OPERATOR THAT DELOYS CALICO USING CRs DEFINED IN CRDs (DEFINITIONS OF CRs AND ITS STRUCTURE THAT THE OPERATOR KNOWS HOW TO HANDLE) BY THE CREATORS OF THE OPERATOR.
+
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/tigera-operator.yaml
+
+# WE DOWNLOAD THE CR CALLED custom.values.yaml THAT TELLS TIGERA OPERATOR HOW TO DEPLOY CALICO 
+
+curl https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/custom-resources.yaml -O
+
+# WE ALSO NEED TO KNOW THE IP RANGE WITH THIS COMMAND:
+
+kubectl -n kube-system get pod -l component=kube-controller-manager -o yaml | grep -i cluster-cidr
+
+# WE PUT IT INSIDE custom-resources.yaml:
+
+vi custom-resources.yaml
+
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  # Configures Calico networking.
+  calicoNetwork:
+    ipPools:
+    - name: default-ipv4-ippool
+      blockSize: 26
+      cidr: 10.244.0.0/16             # HERE, WE PUT 10.224.0.0/16 BECAUSE ITS WHAT WE SPECIFIED IN THE KUBE CONFIG FILE!
+      encapsulation: VXLANCrossSubnet
+      natOutgoing: Enabled
+      nodeSelector: all()
+
+# FINALLY WE USE KUBECTL TO APPLY THE CHANGES USING THE custom-resources.yaml file:
+
+kubectl apply -f custom-resources.yaml
+
+# WE COMPLETED THE SET UP OF THE CNI PLUGIN. NOW CONTAINERS CAN BE ASSIGNED AN IP AND CAN ALSO COMMUNICATE THEMSELVES. IF WE RUN kubectl get nodes WE WILL SEE THAT NOW THEY ARE ON Ready STATUS ALL THREE OF THEM.
+
+
+
+That's session on workers 13/06/2025:
+
+Windows PowerShell
+Copyright (C) Microsoft Corporation. Todos los derechos reservados.
+
+Instale la versión más reciente de PowerShell para obtener nuevas características y mejoras. https://aka.ms/PSWindows
+
+PS C:\WINDOWS\system32> ssh xavi@192.168.1.152
+The authenticity of host '192.168.1.152 (192.168.1.152)' can't be established.
+ED25519 key fingerprint is SHA256:5Lrcw1BdAPkDtLbLp8v4TwSWf6Xobv0VONm6rHqZuSc.
+This host key is known by the following other names/addresses:
+    C:\Users\Usuario/.ssh/known_hosts:5: 192.168.1.129
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '192.168.1.152' (ED25519) to the list of known hosts.
+xavi@192.168.1.152's password:
+Welcome to Ubuntu 25.04 (GNU/Linux 6.14.0-1005-raspi aarch64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Fri Jun 13 14:37:56 UTC 2025
+
+  System load:  0.03               Temperature:           51.2 C
+  Usage of /:   1.2% of 234.20GB   Processes:             156
+  Memory usage: 3%                 Users logged in:       0
+  Swap usage:   0%                 IPv4 address for eth0: 192.168.1.152
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+12 updates can be applied immediately.
+To see these additional updates run: apt list --upgradable
+
+
+Last login: Fri Jun 13 12:52:22 2025 from 192.168.1.131
+xavi@ubuntu:~$  kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+[preflight] Running pre-flight checks
+error execution phase preflight: [preflight] Some fatal errors occurred:
+        [ERROR IsPrivilegedUser]: user is not running as root
+[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`
+To see the stack trace of this error execute with --v=5 or higher
+xavi@ubuntu:~$ sudo kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca
+-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+[sudo] password for xavi:
+[preflight] Running pre-flight checks
+[preflight] The system verification failed. Printing the output from the verification:
+KERNEL_VERSION: 6.14.0-1005-raspi
+CONFIG_NAMESPACES: enabled
+CONFIG_NET_NS: enabled
+CONFIG_PID_NS: enabled
+CONFIG_IPC_NS: enabled
+CONFIG_UTS_NS: enabled
+CONFIG_CGROUPS: enabled
+CONFIG_CGROUP_BPF: enabled
+CONFIG_CGROUP_CPUACCT: enabled
+CONFIG_CGROUP_DEVICE: enabled
+CONFIG_CGROUP_FREEZER: enabled
+CONFIG_CGROUP_PIDS: enabled
+CONFIG_CGROUP_SCHED: enabled
+CONFIG_CPUSETS: enabled
+CONFIG_MEMCG: enabled
+CONFIG_INET: enabled
+CONFIG_EXT4_FS: enabled
+CONFIG_PROC_FS: enabled
+CONFIG_NETFILTER_XT_TARGET_REDIRECT: enabled (as module)
+CONFIG_NETFILTER_XT_MATCH_COMMENT: enabled (as module)
+CONFIG_FAIR_GROUP_SCHED: enabled
+CONFIG_OVERLAY_FS: enabled (as module)
+CONFIG_AUFS_FS: not set - Required for aufs.
+CONFIG_BLK_DEV_DM: enabled (as module)
+CONFIG_CFS_BANDWIDTH: enabled
+CONFIG_CGROUP_HUGETLB: enabled
+CONFIG_SECCOMP: enabled
+CONFIG_SECCOMP_FILTER: enabled
+OS: Linux
+CGROUPS_CPU: enabled
+CGROUPS_CPUSET: enabled
+CGROUPS_DEVICES: enabled
+CGROUPS_FREEZER: enabled
+CGROUPS_MEMORY: missing
+CGROUPS_PIDS: enabled
+CGROUPS_HUGETLB: enabled
+CGROUPS_IO: enabled
+error execution phase preflight: [preflight] Some fatal errors occurred:
+        [ERROR SystemVerification]: missing required cgroups: memory
+[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`
+To see the stack trace of this error execute with --v=5 or higher
+xavi@ubuntu:~$ sudo nano /boot/firmware/cmdline.txt
+xavi@ubuntu:~$ kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca-cert
+-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+[preflight] Running pre-flight checks
+error execution phase preflight: [preflight] Some fatal errors occurred:
+        [ERROR IsPrivilegedUser]: user is not running as root
+[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`
+To see the stack trace of this error execute with --v=5 or higher
+xavi@ubuntu:~$ sudo kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca
+-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+[preflight] Running pre-flight checks
+[preflight] The system verification failed. Printing the output from the verification:
+KERNEL_VERSION: 6.14.0-1005-raspi
+CONFIG_NAMESPACES: enabled
+CONFIG_NET_NS: enabled
+CONFIG_PID_NS: enabled
+CONFIG_IPC_NS: enabled
+CONFIG_UTS_NS: enabled
+CONFIG_CGROUPS: enabled
+CONFIG_CGROUP_BPF: enabled
+CONFIG_CGROUP_CPUACCT: enabled
+CONFIG_CGROUP_DEVICE: enabled
+CONFIG_CGROUP_FREEZER: enabled
+CONFIG_CGROUP_PIDS: enabled
+CONFIG_CGROUP_SCHED: enabled
+CONFIG_CPUSETS: enabled
+CONFIG_MEMCG: enabled
+CONFIG_INET: enabled
+CONFIG_EXT4_FS: enabled
+CONFIG_PROC_FS: enabled
+CONFIG_NETFILTER_XT_TARGET_REDIRECT: enabled (as module)
+CONFIG_NETFILTER_XT_MATCH_COMMENT: enabled (as module)
+CONFIG_FAIR_GROUP_SCHED: enabled
+CONFIG_OVERLAY_FS: enabled (as module)
+CONFIG_AUFS_FS: not set - Required for aufs.
+CONFIG_BLK_DEV_DM: enabled (as module)
+CONFIG_CFS_BANDWIDTH: enabled
+CONFIG_CGROUP_HUGETLB: enabled
+CONFIG_SECCOMP: enabled
+CONFIG_SECCOMP_FILTER: enabled
+OS: Linux
+CGROUPS_CPU: enabled
+CGROUPS_CPUSET: enabled
+CGROUPS_DEVICES: enabled
+CGROUPS_FREEZER: enabled
+CGROUPS_MEMORY: missing
+CGROUPS_PIDS: enabled
+CGROUPS_HUGETLB: enabled
+CGROUPS_IO: enabled
+error execution phase preflight: [preflight] Some fatal errors occurred:
+        [ERROR SystemVerification]: missing required cgroups: memory
+[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`
+To see the stack trace of this error execute with --v=5 or higher
+xavi@ubuntu:~$ sudo reboot
+xavi@ubuntu:~$ client_loop: send disconnect: Connection reset
+PS C:\WINDOWS\system32> ssh xavi@192.168.1.152
+xavi@192.168.1.152's password:
+Welcome to Ubuntu 25.04 (GNU/Linux 6.14.0-1005-raspi aarch64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Fri Jun 13 14:47:09 UTC 2025
+
+  System load:  0.22               Temperature:           60.6 C
+  Usage of /:   1.2% of 234.20GB   Processes:             155
+  Memory usage: 3%                 Users logged in:       0
+  Swap usage:   0%                 IPv4 address for eth0: 192.168.1.152
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+12 updates can be applied immediately.
+To see these additional updates run: apt list --upgradable
+
+
+Last login: Fri Jun 13 14:37:57 2025 from 192.168.1.131
+xavi@ubuntu:~$ ls /sys/fs/cgroup/
+cgroup.controllers      cpu.stat               init.scope              misc.current
+cgroup.max.depth        cpu.stat.local         io.pressure             misc.peak
+cgroup.max.descendants  cpuset.cpus.effective  io.prio.class           proc-sys-fs-binfmt_misc.mount
+cgroup.pressure         cpuset.cpus.isolated   io.stat                 sys-fs-fuse-connections.mount
+cgroup.procs            cpuset.mems.effective  memory.pressure         sys-kernel-config.mount
+cgroup.stat             dev-hugepages.mount    memory.reclaim          sys-kernel-debug.mount
+cgroup.subtree_control  dev-mqueue.mount       memory.stat             sys-kernel-tracing.mount
+cgroup.threads          dmem.capacity          memory.zswap.writeback  system.slice
+cpu.pressure            dmem.current           misc.capacity           user.slice
+xavi@ubuntu:~$ sudo kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca
+-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+[sudo] password for xavi:
+[preflight] Running pre-flight checks
+[preflight] Reading configuration from the "kubeadm-config" ConfigMap in namespace "kube-system"...
+[preflight] Use 'kubeadm init phase upload-config --config your-config.yaml' to re-upload it.
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Starting the kubelet
+[kubelet-check] Waiting for a healthy kubelet at http://127.0.0.1:10248/healthz. This can take up to 4m0s
+[kubelet-check] The kubelet is healthy after 1.502567793s
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+
+xavi@ubuntu:~$ sudo hostnamectl set-hostname ubuntu2
+xavi@ubuntu:~$ sudo reboot
+xavi@ubuntu:~$ client_loop: send disconnect: Connection reset
+PS C:\WINDOWS\system32> ssh xavi@192.168.1.152
+xavi@192.168.1.152's password:
+Welcome to Ubuntu 25.04 (GNU/Linux 6.14.0-1005-raspi aarch64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Fri Jun 13 14:59:58 UTC 2025
+
+  System load:  0.17               Temperature:           60.6 C
+  Usage of /:   1.2% of 234.20GB   Processes:             161
+  Memory usage: 3%                 Users logged in:       0
+  Swap usage:   0%                 IPv4 address for eth0: 192.168.1.152
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+12 updates can be applied immediately.
+To see these additional updates run: apt list --upgradable
+
+
+Last login: Fri Jun 13 14:47:10 2025 from 192.168.1.131
+xavi@ubuntu2:~$ sudo kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+[sudo] password for xavi:
+[preflight] Running pre-flight checks
+error execution phase preflight: [preflight] Some fatal errors occurred:
+        [ERROR FileAvailable--etc-kubernetes-kubelet.conf]: /etc/kubernetes/kubelet.conf already exists
+        [ERROR Port-10250]: Port 10250 is in use
+        [ERROR FileAvailable--etc-kubernetes-pki-ca.crt]: /etc/kubernetes/pki/ca.crt already exists
+[preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`
+To see the stack trace of this error execute with --v=5 or higher
+xavi@ubuntu2:~$ sudo lsof -i :10250
+COMMAND  PID USER FD   TYPE DEVICE SIZE/OFF NODE NAME
+kubelet 1031 root 16u  IPv6  12730      0t0  TCP *:10250 (LISTEN)
+xavi@ubuntu2:~$ sudo kill -9 1031
+xavi@ubuntu2:~$ sudo lsof -i :10250
+xavi@ubuntu2:~$ sudo systemctl stop kubelet
+xavi@ubuntu2:~$ sudo kubeadm reset -f
+[preflight] Running pre-flight checks
+W0613 15:03:53.336917    1369 removeetcdmember.go:106] [reset] No kubeadm config, using etcd pod spec to get data directory
+[reset] Deleted contents of the etcd data directory: /var/lib/etcd
+[reset] Stopping the kubelet service
+[reset] Unmounting mounted directories in "/var/lib/kubelet"
+[reset] Deleting contents of directories: [/etc/kubernetes/manifests /var/lib/kubelet /etc/kubernetes/pki]
+[reset] Deleting files: [/etc/kubernetes/admin.conf /etc/kubernetes/super-admin.conf /etc/kubernetes/kubelet.conf /etc/kubernetes/bootstrap-kubelet.conf /etc/kubernetes/controller-manager.conf /etc/kubernetes/scheduler.conf]
+
+The reset process does not clean CNI configuration. To do so, you must remove /etc/cni/net.d
+
+The reset process does not reset or clean up iptables rules or IPVS tables.
+If you wish to reset iptables, you must do so manually by using the "iptables" command.
+
+If your cluster was setup to utilize IPVS, run ipvsadm --clear (or similar)
+to reset your system's IPVS tables.
+
+The reset process does not clean your kubeconfig files and you must remove them manually.
+Please, check the contents of the $HOME/.kube/config file.
+xavi@ubuntu2:~$ sudo rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni /opt/cni
+sudo systemctl restart kubelet
+xavi@ubuntu2:~$ sudo lsof -i :10250
+xavi@ubuntu2:~$ sudo kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
+[preflight] Running pre-flight checks
+[preflight] Reading configuration from the "kubeadm-config" ConfigMap in namespace "kube-system"...
+[preflight] Use 'kubeadm init phase upload-config --config your-config.yaml' to re-upload it.
+[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
+[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
+[kubelet-start] Starting the kubelet
+[kubelet-check] Waiting for a healthy kubelet at http://127.0.0.1:10248/healthz. This can take up to 4m0s
+[kubelet-check] The kubelet is healthy after 3.001217297s
+[kubelet-start] Waiting for the kubelet to perform the TLS Bootstrap
+
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+Run 'kubectl get nodes' on the control-plane to see this node join the cluster.
+
+
+
+
+
+
+
+Session controlplane 14/06/2025:
+Windows PowerShell
+Copyright (C) Microsoft Corporation. Todos los derechos reservados.
+
+Instale la versión más reciente de PowerShell para obtener nuevas características y mejoras. https://aka.ms/PSWindows
+
+PS C:\WINDOWS\system32> ssh vboxuser@192.168.1.150
+vboxuser@192.168.1.150's password:
+Welcome to Ubuntu 24.04.2 LTS (GNU/Linux 6.8.0-60-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Sat Jun 14 12:37:58 PM UTC 2025
+
+  System load:  0.65              Processes:               175
+  Usage of /:   5.0% of 97.87GB   Users logged in:         0
+  Memory usage: 8%                IPv4 address for enp0s3: 192.168.1.150
+  Swap usage:   0%
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+52 updates can be applied immediately.
+To see these additional updates run: apt list --upgradable
+
+Enable ESM Apps to receive additional future security updates.
+See https://ubuntu.com/esm or run: sudo pro status
+
+
+Last login: Sat Jun 14 11:52:18 2025 from 192.168.1.131
+vboxuser@controlplane:~$ get nodes
+Command 'get' not found, but there are 18 similar ones.
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS   ROLES           AGE   VERSION
+controlplane   Ready    control-plane   22h   v1.32.5
+ubuntu         Ready    worker          21h   v1.32.5
+ubuntu2        Ready    worker          21h   v1.32.5
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS             RESTARTS         AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-stwhp          0/1     Running            32 (5m16s ago)   155m
+calico-apiserver   calico-apiserver-76bd85b4bf-xxrkq          0/1     CrashLoopBackOff   31 (4m9s ago)    155m
+calico-system      calico-kube-controllers-7d85597d94-vrj8t   0/1     CrashLoopBackOff   33 (2m44s ago)   154m
+calico-system      calico-node-dpqjs                          0/1     Running            7                155m
+calico-system      calico-node-lp97v                          0/1     Running            0                155m
+calico-system      calico-node-qvkvq                          0/1     Running            2 (153m ago)     155m
+calico-system      calico-typha-7549bbbd84-qmlzw              1/1     Running            0                155m
+calico-system      calico-typha-7549bbbd84-vdtql              1/1     Running            0                156m
+calico-system      csi-node-driver-9j6zv                      2/2     Running            0                155m
+calico-system      csi-node-driver-gnm4w                      2/2     Running            12               155m
+calico-system      csi-node-driver-xvv6c                      2/2     Running            0                155m
+kube-system        coredns-668d6bf9bc-76g9f                   0/1     Running            0                22h
+kube-system        coredns-668d6bf9bc-ftdf6                   0/1     Running            0                22h
+kube-system        etcd-controlplane                          1/1     Running            8                22h
+kube-system        kube-apiserver-controlplane                1/1     Running            8                22h
+kube-system        kube-controller-manager-controlplane       1/1     Running            9                22h
+kube-system        kube-proxy-fjrpg                           1/1     Running            1                21h
+kube-system        kube-proxy-g4m85                           1/1     Running            1                21h
+kube-system        kube-proxy-q2qxn                           1/1     Running            8                22h
+kube-system        kube-scheduler-controlplane                1/1     Running            8                22h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running            19 (7m47s ago)   3h51m
+vboxuser@controlplane:~$ vi custom-resources.yaml
+vboxuser@controlplane:~$ kubectl -n calico-system logs calico-kube-controllers-7d85597d94-vrj8t
+Error from server: no preferred addresses found; known addresses: []
+vboxuser@controlplane:~$ kubectl -n calico-apiserver logs calico-apiserver-76bd85b4bf-xxrkq
+Error from server: no preferred addresses found; known addresses: []
+vboxuser@controlplane:~$ kubectl -n calico-apiserver logs tigera-operator-7d68577dc5-m52jh
+error: error from server (NotFound): pods "tigera-operator-7d68577dc5-m52jh" not found in namespace "calico-apiserver"
+vboxuser@controlplane:~$ kubectl -n kube-system get pod -l component=kube-controller-manager -o yaml | grep -i cluster-cidr
+      - --cluster-cidr=10.244.0.0/16
+vboxuser@controlplane:~$ kubectl get cm -n calico-system
+NAME               DATA   AGE
+active-operator    1      163m
+cni-config         1      163m
+kube-root-ca.crt   1      163m
+tigera-ca-bundle   2      163m
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS   ROLES           AGE   VERSION
+controlplane   Ready    control-plane   22h   v1.32.5
+ubuntu         Ready    worker          22h   v1.32.5
+ubuntu2        Ready    worker          21h   v1.32.5
+vboxuser@controlplane:~$ kubectl get nodes -o wide
+kubectl get pods -A -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane   Ready    control-plane   22h   v1.32.5   192.168.1.150   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic    cri-o://1.32.1
+ubuntu         Ready    worker          22h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+ubuntu2        Ready    worker          21h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+NAMESPACE          NAME                                       READY   STATUS             RESTARTS         AGE     IP               NODE           NOMINATED NODE   READINESS GATES
+calico-apiserver   calico-apiserver-76bd85b4bf-stwhp          0/1     CrashLoopBackOff   33 (2m48s ago)   164m    10.244.243.197   ubuntu         <none>           <none>
+calico-apiserver   calico-apiserver-76bd85b4bf-xxrkq          0/1     CrashLoopBackOff   33 (93s ago)     164m    10.244.243.198   ubuntu         <none>           <none>
+calico-system      calico-kube-controllers-7d85597d94-vrj8t   0/1     Running            35 (5m23s ago)   163m    10.244.243.195   ubuntu         <none>           <none>
+calico-system      calico-node-dpqjs                          0/1     Running            7                163m    192.168.1.150    controlplane   <none>           <none>
+calico-system      calico-node-lp97v                          0/1     Running            0                163m    <none>           ubuntu2        <none>           <none>
+calico-system      calico-node-qvkvq                          0/1     Running            2 (162m ago)     163m    <none>           ubuntu         <none>           <none>
+calico-system      calico-typha-7549bbbd84-qmlzw              1/1     Running            0                164m    <none>           ubuntu         <none>           <none>
+calico-system      calico-typha-7549bbbd84-vdtql              1/1     Running            0                165m    <none>           ubuntu2        <none>           <none>
+calico-system      csi-node-driver-9j6zv                      2/2     Running            0                163m    10.244.152.64    ubuntu2        <none>           <none>
+calico-system      csi-node-driver-gnm4w                      2/2     Running            12               163m    10.244.49.72     controlplane   <none>           <none>
+calico-system      csi-node-driver-xvv6c                      2/2     Running            0                163m    10.244.243.196   ubuntu         <none>           <none>
+kube-system        coredns-668d6bf9bc-76g9f                   0/1     Running            0                22h     10.244.243.194   ubuntu         <none>           <none>
+kube-system        coredns-668d6bf9bc-ftdf6                   0/1     Running            0                22h     10.244.243.193   ubuntu         <none>           <none>
+kube-system        etcd-controlplane                          1/1     Running            8                22h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-apiserver-controlplane                1/1     Running            8                22h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-controller-manager-controlplane       1/1     Running            9                22h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-proxy-fjrpg                           1/1     Running            1                22h     <none>           ubuntu         <none>           <none>
+kube-system        kube-proxy-g4m85                           1/1     Running            1                21h     <none>           ubuntu2        <none>           <none>
+kube-system        kube-proxy-q2qxn                           1/1     Running            8                22h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-scheduler-controlplane                1/1     Running            8                22h     192.168.1.150    controlplane   <none>           <none>
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running            19 (16m ago)     3h59m   <none>           ubuntu         <none>           <none>
+vboxuser@controlplane:~$ kubectl -n kube-system get pod kube-controller-manager-controlplane -o yaml | grep cluster-cidr
+    - --cluster-cidr=10.244.0.0/16
+vboxuser@controlplane:~$ kubectl -n calico-system get configmap calico-config -o yaml
+Error from server (NotFound): configmaps "calico-config" not found
+vboxuser@controlplane:~$ kubectl apply -f custom-resources.yaml
+installation.operator.tigera.io/default configured
+apiserver.operator.tigera.io/default unchanged
+vboxuser@controlplane:~$ vi custom-resource.yaml
+vboxuser@controlplane:~$ vboxuser@controlplane:~$ vi custom-resources.yaml
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS             RESTARTS         AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-stwhp          0/1     CrashLoopBackOff   35 (2m59s ago)   175m
+calico-apiserver   calico-apiserver-76bd85b4bf-xxrkq          0/1     CrashLoopBackOff   35 (93s ago)     175m
+calico-system      calico-kube-controllers-7d85597d94-vrj8t   0/1     CrashLoopBackOff   36 (4m30s ago)   175m
+calico-system      calico-node-dpqjs                          0/1     Running            7                175m
+calico-system      calico-node-lp97v                          0/1     Running            0                175m
+calico-system      calico-node-qvkvq                          0/1     Running            2 (173m ago)     175m
+calico-system      calico-typha-7549bbbd84-qmlzw              1/1     Running            0                176m
+calico-system      calico-typha-7549bbbd84-vdtql              1/1     Running            0                176m
+calico-system      csi-node-driver-9j6zv                      2/2     Running            0                175m
+calico-system      csi-node-driver-gnm4w                      2/2     Running            12               175m
+calico-system      csi-node-driver-xvv6c                      2/2     Running            0                175m
+kube-system        coredns-668d6bf9bc-76g9f                   0/1     Running            0                22h
+kube-system        coredns-668d6bf9bc-ftdf6                   0/1     Running            0                22h
+kube-system        etcd-controlplane                          1/1     Running            8                23h
+kube-system        kube-apiserver-controlplane                1/1     Running            8                23h
+kube-system        kube-controller-manager-controlplane       1/1     Running            9                23h
+kube-system        kube-proxy-fjrpg                           1/1     Running            1                22h
+kube-system        kube-proxy-g4m85                           1/1     Running            1                21h
+kube-system        kube-proxy-q2qxn                           1/1     Running            8                22h
+kube-system        kube-scheduler-controlplane                1/1     Running            8                23h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running            19 (27m ago)     4h11m
+vboxuser@controlplane:~$ kubectl -n kube-system get pod kube-controller-manager-controlplane -o yaml | grep cluster-cidr
+    - --cluster-cidr=10.244.0.0/16
+vboxuser@controlplane:~$ kubectl -n calico-system delete pod --all
+kubectl -n calico-apiserver delete pod --all
+pod "calico-kube-controllers-7d85597d94-vrj8t" deleted
+pod "calico-node-dpqjs" deleted
+pod "calico-node-lp97v" deleted
+pod "calico-node-qvkvq" deleted
+pod "calico-typha-7549bbbd84-qmlzw" deleted
+pod "calico-typha-7549bbbd84-vdtql" deleted
+pod "csi-node-driver-9j6zv" deleted
+pod "csi-node-driver-gnm4w" deleted
+pod "csi-node-driver-xvv6c" deleted
+pod "calico-apiserver-76bd85b4bf-stwhp" deleted
+pod "calico-apiserver-76bd85b4bf-xxrkq" deleted
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          0/1     Running   0              37s
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          0/1     Running   0              38s
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              45s
+calico-system      calico-node-jgdrn                          1/1     Running   0              43s
+calico-system      calico-node-p2pkj                          0/1     Running   0              41s
+calico-system      calico-node-q89zc                          1/1     Running   0              44s
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              44s
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              44s
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              41s
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              40s
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              42s
+kube-system        coredns-668d6bf9bc-76g9f                   0/1     Running   0              23h
+kube-system        coredns-668d6bf9bc-ftdf6                   0/1     Running   0              23h
+kube-system        etcd-controlplane                          1/1     Running   8              23h
+kube-system        kube-apiserver-controlplane                1/1     Running   8              23h
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              23h
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              22h
+kube-system        kube-proxy-g4m85                           1/1     Running   1              22h
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              23h
+kube-system        kube-scheduler-controlplane                1/1     Running   8              23h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   19 (31m ago)   4h14m
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0              89s
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0              90s
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              97s
+calico-system      calico-node-jgdrn                          1/1     Running   0              95s
+calico-system      calico-node-p2pkj                          1/1     Running   0              93s
+calico-system      calico-node-q89zc                          1/1     Running   0              96s
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              96s
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              96s
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              93s
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              92s
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              94s
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0              23h
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0              23h
+kube-system        etcd-controlplane                          1/1     Running   8              23h
+kube-system        kube-apiserver-controlplane                1/1     Running   8              23h
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              23h
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              22h
+kube-system        kube-proxy-g4m85                           1/1     Running   1              22h
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              23h
+kube-system        kube-scheduler-controlplane                1/1     Running   8              23h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   19 (32m ago)   4h15m
+vboxuser@controlplane:~$ kubectl get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane   Ready    control-plane   23h   v1.32.5   192.168.1.150   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic    cri-o://1.32.1
+ubuntu         Ready    worker          22h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+ubuntu2        Ready    worker          22h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+vboxuser@controlplane:~$ kubectl get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane   Ready    control-plane   23h   v1.32.5   192.168.1.150   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic    cri-o://1.32.1
+ubuntu         Ready    worker          22h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+ubuntu2        Ready    worker          22h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+vboxuser@controlplane:~$ client_loop: send disconnect: Connection reset
+PS C:\WINDOWS\system32> ssh vboxuser@192.168.1.150
+ssh: connect to host 192.168.1.150 port 22: Unknown error
+PS C:\WINDOWS\system32> ssh vboxuser@192.168.1.150
+ssh: connect to host 192.168.1.150 port 22: Unknown error
+PS C:\WINDOWS\system32> ssh vboxuser@192.168.1.150
+vboxuser@192.168.1.150's password:
+Welcome to Ubuntu 24.04.2 LTS (GNU/Linux 6.8.0-60-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Sat Jun 14 01:38:21 PM UTC 2025
+
+  System load:  1.45              Processes:               213
+  Usage of /:   5.1% of 97.87GB   Users logged in:         1
+  Memory usage: 13%               IPv4 address for enp0s3: 192.168.1.150
+  Swap usage:   0%
+
+ * Strictly confined Kubernetes makes edge and IoT secure. Learn how MicroK8s
+   just raised the bar for easy, resilient and secure K8s cluster deployment.
+
+   https://ubuntu.com/engage/secure-kubernetes-at-the-edge
+
+Expanded Security Maintenance for Applications is not enabled.
+
+52 updates can be applied immediately.
+To see these additional updates run: apt list --upgradable
+
+Enable ESM Apps to receive additional future security updates.
+See https://ubuntu.com/esm or run: sudo pro status
+
+
+Last login: Sat Jun 14 12:38:39 2025 from 192.168.1.131
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS         AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          0/1     Running   0                32m
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0                33m
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0                33m
+calico-system      calico-node-jgdrn                          0/1     Running   0                33m
+calico-system      calico-node-p2pkj                          1/1     Running   0                33m
+calico-system      calico-node-q89zc                          0/1     Running   0                33m
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0                33m
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0                33m
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0                33m
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0                33m
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0                33m
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0                23h
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0                23h
+kube-system        etcd-controlplane                          1/1     Running   8                23h
+kube-system        kube-apiserver-controlplane                1/1     Running   8                23h
+kube-system        kube-controller-manager-controlplane       1/1     Running   9                23h
+kube-system        kube-proxy-fjrpg                           1/1     Running   1                22h
+kube-system        kube-proxy-g4m85                           1/1     Running   1                22h
+kube-system        kube-proxy-q2qxn                           1/1     Running   8                23h
+kube-system        kube-scheduler-controlplane                1/1     Running   8                23h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   20 (4m29s ago)   4h47m
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS         AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0                34m
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0                34m
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0                34m
+calico-system      calico-node-jgdrn                          1/1     Running   0                34m
+calico-system      calico-node-p2pkj                          1/1     Running   0                34m
+calico-system      calico-node-q89zc                          1/1     Running   0                34m
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0                34m
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0                34m
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0                34m
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0                34m
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0                34m
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0                23h
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0                23h
+kube-system        etcd-controlplane                          1/1     Running   8                23h
+kube-system        kube-apiserver-controlplane                1/1     Running   8                23h
+kube-system        kube-controller-manager-controlplane       1/1     Running   9                23h
+kube-system        kube-proxy-fjrpg                           1/1     Running   1                22h
+kube-system        kube-proxy-g4m85                           1/1     Running   1                22h
+kube-system        kube-proxy-q2qxn                           1/1     Running   8                23h
+kube-system        kube-scheduler-controlplane                1/1     Running   8                23h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   20 (5m43s ago)   4h48m
+vboxuser@controlplane:~$ kubectl get nodes
+NAME           STATUS   ROLES           AGE   VERSION
+controlplane   Ready    control-plane   23h   v1.32.5
+ubuntu         Ready    worker          22h   v1.32.5
+ubuntu2        Ready    worker          22h   v1.32.5
+vboxuser@controlplane:~$ kubectl get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane   Ready    control-plane   23h   v1.32.5   192.168.1.150   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic    cri-o://1.32.1
+ubuntu         Ready    worker          22h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+ubuntu2        Ready    worker          22h   v1.32.5   <none>          <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+vboxuser@controlplane:~$ sudo systemctl status kubelet
+[sudo] password for vboxuser:
+● kubelet.service - kubelet: The Kubernetes Node Agent
+     Loaded: loaded (/usr/lib/systemd/system/kubelet.service; enabled; preset: enabled)
+    Drop-In: /usr/lib/systemd/system/kubelet.service.d
+             └─10-kubeadm.conf
+     Active: active (running) since Sat 2025-06-14 12:37:43 UTC; 1h 31min ago
+       Docs: https://kubernetes.io/docs/
+   Main PID: 1104 (kubelet)
+      Tasks: 14 (limit: 9207)
+     Memory: 109.2M (peak: 110.4M)
+        CPU: 12min 36.574s
+     CGroup: /system.slice/kubelet.service
+             └─1104 /usr/bin/kubelet --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --ku>
+
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.580465    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.582624    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.583286    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.588313    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.588366    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.600189    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.600248    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.605951    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.606001    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:06:11 controlplane kubelet[1104]: I0614 13:06:11.744254    1104 pod_startup_latency_tracker.g>
+...skipping...
+● kubelet.service - kubelet: The Kubernetes Node Agent
+     Loaded: loaded (/usr/lib/systemd/system/kubelet.service; enabled; preset: enabled)
+    Drop-In: /usr/lib/systemd/system/kubelet.service.d
+             └─10-kubeadm.conf
+     Active: active (running) since Sat 2025-06-14 12:37:43 UTC; 1h 31min ago
+       Docs: https://kubernetes.io/docs/
+   Main PID: 1104 (kubelet)
+      Tasks: 14 (limit: 9207)
+     Memory: 109.2M (peak: 110.4M)
+        CPU: 12min 36.574s
+     CGroup: /system.slice/kubelet.service
+             └─1104 /usr/bin/kubelet --bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --ku>
+
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.580465    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.582624    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.583286    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.588313    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.588366    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.600189    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.600248    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:05:45 controlplane kubelet[1104]: E0614 13:05:45.605951    1104 log.go:32] "ContainerStatus f>
+Jun 14 13:05:45 controlplane kubelet[1104]: I0614 13:05:45.606001    1104 kuberuntime_gc.go:361] "Error>
+Jun 14 13:06:11 controlplane kubelet[1104]: I0614 13:06:11.744254    1104 pod_startup_latency_tracker.g>
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+lines 1-23/23 (END)
+vboxuser@controlplane:~$  cat /etc/default/kubelet
+KUBELET_EXTRA_ARGS=--node-ip=
+vboxuser@controlplane:~$   sudo tee /etc/default/kubelet << EOF
+KUBELET_EXTRA_ARGS=--node-ip=192.168.1.150
+EOF
+KUBELET_EXTRA_ARGS=--node-ip=192.168.1.150
+vboxuser@controlplane:~$  cat /etc/default/kubelet
+KUBELET_EXTRA_ARGS=--node-ip=192.168.1.150
+vboxuser@controlplane:~$  sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0              70m
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0              70m
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              70m
+calico-system      calico-node-jgdrn                          1/1     Running   0              70m
+calico-system      calico-node-p2pkj                          1/1     Running   0              70m
+calico-system      calico-node-q89zc                          1/1     Running   0              70m
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              70m
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              70m
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              70m
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              70m
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              70m
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0              24h
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0              24h
+kube-system        etcd-controlplane                          1/1     Running   8              24h
+kube-system        kube-apiserver-controlplane                1/1     Running   8              24h
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              24h
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              23h
+kube-system        kube-proxy-g4m85                           1/1     Running   1              23h
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              24h
+kube-system        kube-scheduler-controlplane                1/1     Running   8              24h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (18m ago)   5h24m
+vboxuser@controlplane:~$ kubectl get no
+NAME           STATUS   ROLES           AGE   VERSION
+controlplane   Ready    control-plane   24h   v1.32.5
+ubuntu         Ready    worker          23h   v1.32.5
+ubuntu2        Ready    worker          23h   v1.32.5
+vboxuser@controlplane:~$ kubectl get no -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane   Ready    control-plane   24h   v1.32.5   192.168.1.150   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic    cri-o://1.32.1
+ubuntu         Ready    worker          23h   v1.32.5   192.168.1.151   <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+ubuntu2        Ready    worker          23h   v1.32.5   192.168.1.152   <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+vboxuser@controlplane:~$ kubectl get no -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+controlplane   Ready    control-plane   24h   v1.32.5   192.168.1.150   <none>        Ubuntu 24.04.2 LTS   6.8.0-60-generic    cri-o://1.32.1
+ubuntu         Ready    worker          23h   v1.32.5   192.168.1.151   <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+ubuntu2        Ready    worker          23h   v1.32.5   192.168.1.152   <none>        Ubuntu 25.04         6.14.0-1005-raspi   cri-o://1.32.1
+vboxuser@controlplane:~$ kubectl get po -A
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0              81m
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0              81m
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              82m
+calico-system      calico-node-jgdrn                          1/1     Running   0              82m
+calico-system      calico-node-p2pkj                          1/1     Running   0              81m
+calico-system      calico-node-q89zc                          1/1     Running   0              82m
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              82m
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              82m
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              81m
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              81m
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              82m
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0              24h
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0              24h
+kube-system        etcd-controlplane                          1/1     Running   8              24h
+kube-system        kube-apiserver-controlplane                1/1     Running   8              24h
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              24h
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              23h
+kube-system        kube-proxy-g4m85                           1/1     Running   1              23h
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              24h
+kube-system        kube-scheduler-controlplane                1/1     Running   8              24h
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (29m ago)   5h36m
+vboxuser@controlplane:~$ kubectl get po -o wide
+No resources found in default namespace.
+vboxuser@controlplane:~$ kubectl get po -A -o wide
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE     IP               NODE           NOMINATED NODE   READINESS GATES
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0              82m     10.244.152.69    ubuntu2        <none>           <none>
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0              82m     10.244.152.68    ubuntu2        <none>           <none>
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              82m     10.244.152.66    ubuntu2        <none>           <none>
+calico-system      calico-node-jgdrn                          1/1     Running   0              82m     192.168.1.151    ubuntu         <none>           <none>
+calico-system      calico-node-p2pkj                          1/1     Running   0              82m     192.168.1.150    controlplane   <none>           <none>
+calico-system      calico-node-q89zc                          1/1     Running   0              82m     192.168.1.152    ubuntu2        <none>           <none>
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              82m     192.168.1.152    ubuntu2        <none>           <none>
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              82m     192.168.1.150    controlplane   <none>           <none>
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              82m     10.244.243.199   ubuntu         <none>           <none>
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              82m     10.244.49.73     controlplane   <none>           <none>
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              82m     10.244.152.67    ubuntu2        <none>           <none>
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0              24h     10.244.243.194   ubuntu         <none>           <none>
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0              24h     10.244.243.193   ubuntu         <none>           <none>
+kube-system        etcd-controlplane                          1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-apiserver-controlplane                1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              23h     192.168.1.151    ubuntu         <none>           <none>
+kube-system        kube-proxy-g4m85                           1/1     Running   1              23h     192.168.1.152    ubuntu2        <none>           <none>
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-scheduler-controlplane                1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (30m ago)   5h36m   192.168.1.151    ubuntu         <none>           <none>
+vboxuser@controlplane:~$ kubectl get pod -A -o wide
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE     IP               NODE           NOMINATED NODE   READINESS GATES
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0              83m     10.244.152.69    ubuntu2        <none>           <none>
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0              83m     10.244.152.68    ubuntu2        <none>           <none>
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              83m     10.244.152.66    ubuntu2        <none>           <none>
+calico-system      calico-node-jgdrn                          1/1     Running   0              83m     192.168.1.151    ubuntu         <none>           <none>
+calico-system      calico-node-p2pkj                          1/1     Running   0              83m     192.168.1.150    controlplane   <none>           <none>
+calico-system      calico-node-q89zc                          1/1     Running   0              83m     192.168.1.152    ubuntu2        <none>           <none>
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              83m     192.168.1.152    ubuntu2        <none>           <none>
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              83m     192.168.1.150    controlplane   <none>           <none>
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              83m     10.244.243.199   ubuntu         <none>           <none>
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              83m     10.244.49.73     controlplane   <none>           <none>
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              83m     10.244.152.67    ubuntu2        <none>           <none>
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0              24h     10.244.243.194   ubuntu         <none>           <none>
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0              24h     10.244.243.193   ubuntu         <none>           <none>
+kube-system        etcd-controlplane                          1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-apiserver-controlplane                1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              23h     192.168.1.151    ubuntu         <none>           <none>
+kube-system        kube-proxy-g4m85                           1/1     Running   1              23h     192.168.1.152    ubuntu2        <none>           <none>
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-scheduler-controlplane                1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (31m ago)   5h37m   192.168.1.151    ubuntu         <none>           <none>
+vboxuser@controlplane:~$ kubectl get top nodes
+error: the server doesn't have a resource type "top"
+vboxuser@controlplane:~$ kubectl top nodes
+error: Metrics API not available
+vboxuser@controlplane:~$ kubectl apply -f https://raw.githubusercontent.com/techiescamp/cka-certification-guide/refs/heads/main/lab-setup/manifests/metrics-server/metrics-server.yaml
+serviceaccount/metrics-server created
+clusterrole.rbac.authorization.k8s.io/system:aggregated-metrics-reader created
+clusterrole.rbac.authorization.k8s.io/system:metrics-server created
+rolebinding.rbac.authorization.k8s.io/metrics-server-auth-reader created
+clusterrolebinding.rbac.authorization.k8s.io/metrics-server:system:auth-delegator created
+clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
+service/metrics-server created
+deployment.apps/metrics-server created
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
+vboxuser@controlplane:~$ kubectl top nodes
+NAME           CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)
+controlplane   809m         20%      1647Mi          21%
+ubuntu         437m         10%      875Mi           11%
+ubuntu2        39m          0%       947Mi           12%
+vboxuser@controlplane:~$ kubectl top pod -n kube-system
+NAME                                   CPU(cores)   MEMORY(bytes)
+coredns-668d6bf9bc-76g9f               2m           13Mi
+coredns-668d6bf9bc-ftdf6               2m           13Mi
+etcd-controlplane                      189m         96Mi
+kube-apiserver-controlplane            289m         449Mi
+kube-controller-manager-controlplane   129m         128Mi
+kube-proxy-fjrpg                       10m          83Mi
+kube-proxy-g4m85                       18m          84Mi
+kube-proxy-q2qxn                       52m          77Mi
+kube-scheduler-controlplane            42m          78Mi
+metrics-server-74f5944674-xvfzn        5m           16Mi
+vboxuser@controlplane:~$ kubectl get n
+error: the server doesn't have a resource type "n"
+vboxuser@controlplane:~$ kubectl get namespace
+NAME               STATUS   AGE
+calico-apiserver   Active   4h33m
+calico-system      Active   4h33m
+default            Active   24h
+kube-node-lease    Active   24h
+kube-public        Active   24h
+kube-system        Active   24h
+tigera-operator    Active   5h48m
+vboxuser@controlplane:~$ kubectl top nodes
+NAME           CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)
+controlplane   596m         14%      1656Mi          21%
+ubuntu         63m          1%       861Mi           10%
+ubuntu2        40m          1%       952Mi           12%
+vboxuser@controlplane:~$ cat <<EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+EOF
+deployment.apps/nginx-deployment created
+vboxuser@controlplane:~$ kubectl get pod
+NAME                              READY   STATUS    RESTARTS   AGE
+nginx-deployment-96b9d695-hrw6c   1/1     Running   0          15s
+nginx-deployment-96b9d695-wsj95   1/1     Running   0          15s
+vboxuser@controlplane:~$ kubectl get pod -A
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0              107m
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0              107m
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              107m
+calico-system      calico-node-jgdrn                          1/1     Running   0              107m
+calico-system      calico-node-p2pkj                          1/1     Running   0              107m
+calico-system      calico-node-q89zc                          1/1     Running   0              107m
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              107m
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              107m
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              107m
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              107m
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              107m
+default            nginx-deployment-96b9d695-hrw6c            1/1     Running   0              32s
+default            nginx-deployment-96b9d695-wsj95            1/1     Running   0              32s
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0              24h
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0              24h
+kube-system        etcd-controlplane                          1/1     Running   8              24h
+kube-system        kube-apiserver-controlplane                1/1     Running   8              24h
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              24h
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              24h
+kube-system        kube-proxy-g4m85                           1/1     Running   1              23h
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              24h
+kube-system        kube-scheduler-controlplane                1/1     Running   8              24h
+kube-system        metrics-server-74f5944674-xvfzn            1/1     Running   0              15m
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (55m ago)   6h1m
+vboxuser@controlplane:~$ cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 32000
+EOF
+service/nginx-service created
+vboxuser@controlplane:~$ kubectl get pod -A -o wide
+NAMESPACE          NAME                                       READY   STATUS    RESTARTS       AGE     IP               NODE           NOMINATED NODE   READINESS GATES
+calico-apiserver   calico-apiserver-76bd85b4bf-c6dgk          1/1     Running   0              110m    10.244.152.69    ubuntu2        <none>           <none>
+calico-apiserver   calico-apiserver-76bd85b4bf-wcl7w          1/1     Running   0              110m    10.244.152.68    ubuntu2        <none>           <none>
+calico-system      calico-kube-controllers-7d85597d94-6gcx9   1/1     Running   0              110m    10.244.152.66    ubuntu2        <none>           <none>
+calico-system      calico-node-jgdrn                          1/1     Running   0              110m    192.168.1.151    ubuntu         <none>           <none>
+calico-system      calico-node-p2pkj                          1/1     Running   0              110m    192.168.1.150    controlplane   <none>           <none>
+calico-system      calico-node-q89zc                          1/1     Running   0              110m    192.168.1.152    ubuntu2        <none>           <none>
+calico-system      calico-typha-7549bbbd84-qdmj5              1/1     Running   0              110m    192.168.1.152    ubuntu2        <none>           <none>
+calico-system      calico-typha-7549bbbd84-wnb24              1/1     Running   0              110m    192.168.1.150    controlplane   <none>           <none>
+calico-system      csi-node-driver-9b2wk                      2/2     Running   0              110m    10.244.243.199   ubuntu         <none>           <none>
+calico-system      csi-node-driver-d2hgh                      2/2     Running   0              110m    10.244.49.73     controlplane   <none>           <none>
+calico-system      csi-node-driver-qlkkr                      2/2     Running   0              110m    10.244.152.67    ubuntu2        <none>           <none>
+default            nginx-deployment-96b9d695-hrw6c            1/1     Running   0              3m11s   10.244.243.200   ubuntu         <none>           <none>
+default            nginx-deployment-96b9d695-wsj95            1/1     Running   0              3m11s   10.244.152.70    ubuntu2        <none>           <none>
+kube-system        coredns-668d6bf9bc-76g9f                   1/1     Running   0              24h     10.244.243.194   ubuntu         <none>           <none>
+kube-system        coredns-668d6bf9bc-ftdf6                   1/1     Running   0              24h     10.244.243.193   ubuntu         <none>           <none>
+kube-system        etcd-controlplane                          1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-apiserver-controlplane                1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-controller-manager-controlplane       1/1     Running   9              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-proxy-fjrpg                           1/1     Running   1              24h     192.168.1.151    ubuntu         <none>           <none>
+kube-system        kube-proxy-g4m85                           1/1     Running   1              23h     192.168.1.152    ubuntu2        <none>           <none>
+kube-system        kube-proxy-q2qxn                           1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        kube-scheduler-controlplane                1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
+kube-system        metrics-server-74f5944674-xvfzn            1/1     Running   0              17m     192.168.1.151    ubuntu         <none>           <none>
+tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (57m ago)   6h4m    192.168.1.151    ubuntu         <none>           <none>
