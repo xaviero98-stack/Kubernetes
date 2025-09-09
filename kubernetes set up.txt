@@ -1,6 +1,8 @@
+# THIS IS A FILE THAT SHOWS ALL THE PROCESS OF CONFIGURING A KUBERNETES 
+
 # ON ALL NODES WE CAN THE NEXT COMMANDS:
 
-# THESE FIRST PART INTALLS CRI-O THE CONTAINER RUNTIME INTERFACE THAT KUBERNETES WILL USE. IT'S COMPATIBLE WITH DOCKER HUB IMAGES.
+# THESE FIRST PART INTALLS CRI-O THE CONTAINER RUNTIME INTERFACE THAT KUBERNETES WILL USE AND KUBERNETES. IT'S COMPATIBLE WITH DOCKER HUB IMAGES.
 
 # Kubernetes Variable Declaration
 
@@ -63,6 +65,8 @@ KUBELET_EXTRA_ARGS=--node-ip=$local_ip
 
 EOF
 
+# FROM NOW ON WE ONLY RUN TH FOLLOWING COMMANDS ON THE controlplane NODE. YOU WILL NOTICE WHEN THE NOTES SWITCH BETWEEN NODES BECAUSE I WILL USE THE Powershell CONSOLE FROM WINDOWS TO CONNECT TO THEM THROUGH SSH USING THE COMMAND ssh vboxuser@192.168.1.150 FOR CONTROLPLANE, AND ssh xavi@192.168.1.151 AND ssh xavi@192.168.1.152 FOR THE NODES ubuntu AND ubuntu2.
+
 # NOW WE CREATE THE kube.config FILE THAT WILL CONTAIN CLUSTER CONFIGURATION:
 
 vi kubeadm.config
@@ -117,12 +121,11 @@ conntrack:
   tcpCloseWaitTimeout: "1h"
   tcpEstablishedTimeout: "24h"
 
-# IN MY CASE I'VE USED DHCP Binding to ASSIGN THE VM ACTING AS CONTROLPLANE INSIDE MY LAPTOP THE PERMANENT IP 192.168.1.150, THW VM HAS ACCESS TO THE LOCAL NETWORK POWERRED BY MY WIFI 
-# ROUTER THANKS TO A BRIDGE ADAPTER. FINALLY WE RUN THE COMMAND:
+# IN MY CASE I'VE USED DHCP Binding to ASSIGN THE VM ACTING AS CONTROLPLANE INSIDE MY LAPTOP WHOSE PERMANENT IP IS 192.168.1.150, THE VM HAS ACCESS TO THE LOCAL NETWORK POWERRED BY MY WIFI ROUTER THANKS TO A BRIDGE ADAPTER. FINALLY WE RUN THE COMMAND:
 
 sudo kubeadm init --config=kubeadm.config
 
-# IF WE WANT TO RESET THE CLUSTER DEPLOYMENT MADE WITH kubeadm init WE CAN DO IT LIKE THAT 
+# IF WE WANT TO RESET THE CLUSTER DEPLOYMENT MADE WITH kubeadm init (UNDOING PREVIOUS COMMAND) WE CAN DO IT LIKE THAT 
 
 # Reset kubeadm and clean configuration
 sudo kubeadm reset --force
@@ -130,10 +133,10 @@ sudo kubeadm reset --force
 # Delete kubeconfig from current user
 sudo rm -rf ~/.kube
 
-# Eliminar configuración de red CNI
+# Delete CNI network configuration
 sudo rm -rf /etc/cni/net.d
 
-# Eliminar todos los contenedores y pods
+# Delete all pods and containers
 sudo crictl rm --all
 sudo crictl rmi --prune
 
@@ -249,21 +252,21 @@ error execution phase preflight: [preflight] Some fatal errors occurred:
         [ERROR DirAvailable--var-lib-etcd]: /var/lib/etcd is not empty
 [preflight] If you know what you are doing, you can make a check non-fatal with `--ignore-preflight-errors=...`
 To see the stack trace of this error execute with --v=5 or higher
-vboxuser@controlplane:~$ # Resetear kubeadm y limpiar configuración
+vboxuser@controlplane:~$ 
+
+# Reset kubeadmn and reset configuration
 sudo kubeadm reset --force
 
-# Eliminar el kubeconfig del usuario actual
+# Reset current kubeconfig
 sudo rm -rf ~/.kube
 
-# Eliminar configuración de red CNI
+# Delete CNI network configuration
 sudo rm -rf /etc/cni/net.d
 
-# Eliminar todos los contenedores y pods (para containerd)
+# Delete all containers and pods
 sudo crictl rm --all
 sudo crictl rmi --prune
 
-# Si usas Docker en lugar de containerd/cri-o, usa esto en su lugar:
-# sudo docker system prune -af
 [reset] Reading configuration from the "kubeadm-config" ConfigMap in namespace "kube-system"...
 [reset] Use 'kubeadm init phase upload-config --config your-config.yaml' to re-upload it.
 W0613 13:33:48.183475    1590 reset.go:143] [reset] Unable to fetch the kubeadm-config ConfigMap from cluster: failed to get config map: Get "https://controlplane:6443/api/v1/namespaces/kube-system/configmaps/kubeadm-config?timeout=10s": dial tcp 192.168.1.100:6443: connect: no route to host
@@ -583,10 +586,13 @@ kubectl apply -f custom-resources.yaml
 
 That's session on workers 13/06/2025:
 
+
 Windows PowerShell
 Copyright (C) Microsoft Corporation. Todos los derechos reservados.
 
 Instale la versión más reciente de PowerShell para obtener nuevas características y mejoras. https://aka.ms/PSWindows
+
+# NOW WE WILL JOIN THE LAST NODE 
 
 PS C:\WINDOWS\system32> ssh xavi@192.168.1.152
 The authenticity of host '192.168.1.152 (192.168.1.152)' can't be established.
@@ -806,8 +812,10 @@ Welcome to Ubuntu 25.04 (GNU/Linux 6.14.0-1005-raspi aarch64)
 12 updates can be applied immediately.
 To see these additional updates run: apt list --upgradable
 
-
 Last login: Fri Jun 13 14:47:10 2025 from 192.168.1.131
+
+# HERE I TRY TO PUT REJOIN THE NODE BECAUSE I OVERLOOKED THAT ONE OF THE LAST COMMANDS ALREADY MADE IT POSSIBLE, BUT IT'S GOOD TO SEE THE OUTPUT WHEN THAT HAPPENS: 
+
 xavi@ubuntu2:~$ sudo kubeadm join 192.168.1.150:6443 --token r0rs0l.j8orgflcz6564g3g --discovery-token-ca-cert-hash sha256:1dbe6ef3c66eac98d6f8bff2ad342be658671e38a43a0b4ad187a4472e2dff67
 [sudo] password for xavi:
 [preflight] Running pre-flight checks
@@ -911,6 +919,9 @@ NAME           STATUS   ROLES           AGE   VERSION
 controlplane   Ready    control-plane   22h   v1.32.5
 ubuntu         Ready    worker          21h   v1.32.5
 ubuntu2        Ready    worker          21h   v1.32.5
+
+# THE REST OF THE COMMAND ARE SOME EXTRA VERIFICATIONS, I RESTARTED ALL CALICO NETWORK PODS (DELETED THEM AND TIGERA BROUGHT NEW ONES BACK) AND THEN ALL PODS BECAME READY.
+
 vboxuser@controlplane:~$ kubectl get po -A
 NAMESPACE          NAME                                       READY   STATUS             RESTARTS         AGE
 calico-apiserver   calico-apiserver-76bd85b4bf-stwhp          0/1     Running            32 (5m16s ago)   155m
@@ -1510,3 +1521,4 @@ kube-system        kube-proxy-q2qxn                           1/1     Running   
 kube-system        kube-scheduler-controlplane                1/1     Running   8              24h     192.168.1.150    controlplane   <none>           <none>
 kube-system        metrics-server-74f5944674-xvfzn            1/1     Running   0              17m     192.168.1.151    ubuntu         <none>           <none>
 tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (57m ago)   6h4m    192.168.1.151    ubuntu         <none>           <none>
+
