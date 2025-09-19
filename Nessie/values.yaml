@@ -1,0 +1,14 @@
+catalog:
+  iceberg:
+    defaultWarehouse: WH
+    WH:
+      location: s3a://test
+  storage:
+    s3:
+      defaultOptions:
+        endpoint: http://myminio-hl.minio-tenant.svc.cluster.local:9000
+        pathStyleAccess: true
+        accessKeySecret:
+          awsAccessKeyId: DntpVaf6QiCkEvTXS5UH
+          awsSecretAccessKey: 4IFrgFNlfvS73WGq0D0OQYdEhCoKw4tuzb7Msoaz
+          name: null

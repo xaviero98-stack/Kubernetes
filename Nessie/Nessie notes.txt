@@ -1,0 +1,50 @@
+TO SET UP AND INTEGRATE NESSIE WITH SPARK ON MY CASE YOU HAVE TO FOLLOW THE FOLLOWING STEPS:
+
+- NESSIE IS INSTALLED THROUGH THE OFFICIAL HELM CHART ON YOUR KUBERNETES CLUSTER SO WE JUST HAVE TO FOLLOW THE DOCUMENTATION FOR THAT:
+
+helm repo add nessie-helm https://charts.projectnessie.org
+helm repo update
+
+- THEN, LOOKING AT THE DOCUMENTATION WE CAN SEE WHAT PARAMETERS WE HAVE TO GIVE TO NESSIE TO THAT IN INTEGRATES WITH MINIO FOR DATA AND METADATA STORAGE, AND WE FILL A values.yaml LIKE THAT IN MY CASE:
+
+catalog:
+  iceberg:
+    defaultWarehouse: WH
+    WH:
+      location: s3a://test
+  storage:
+    s3:
+      defaultOptions:
+        endpoint: http://myminio-hl.minio-tenant.svc.cluster.local:9000
+        pathStyleAccess: true
+        accessKeySecret:
+# KEYS SHOULD BE ENCRYPTED OR PUT IN A KUBERENTES SECRET BUT FOR DEVELOPMENT PURPOSES IS FASTER NO MAKE IT THAT WAY
+          awsAccessKeyId: DntpVaf6QiCkEvTXS5UH
+          awsSecretAccessKey: 4IFrgFNlfvS73WGq0D0OQYdEhCoKw4tuzb7Msoaz
+          name: null
+
+AND ULTIMATELY WE RUN THE COMMAND:
+
+helm install -n nessie-ns nessie nessie-helm/nessie -f values.yaml
+
+- ONCE DEPLOYED IN nessie-ns NAMESPACE, WE CAN INTERACT WITH IT USING SPARK WITH THE FOLLOWING COMMANDS THAT WE CAN ALSO SEE ON SPARK DIRECTORY:
+
+    .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.103.3,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262")
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,org.projectnessie.spark.extensions.NessieSparkSessionExtensions")
+    .config("spark.sql.catalog.nessie", "org.apache.iceberg.spark.SparkCatalog")
+    .config("spark.sql.catalog.nessie.uri", "http://nessie.minio-tenant.svc.cluster.local:19120/api/v1")
+    .config("spark.sql.catalog.nessie.ref", "main")
+    .config("spark.sql.catalog.nessie.authentication.type", "NONE")
+    .config("spark.sql.catalog.nessie.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog")
+    .config("spark.sql.catalog.nessie.warehouse", "s3a://test")
+    .config("spark.hadoop.fs.s3a.access.key", "DntpVaf6QiCkEvTXS5UH")
+    .config("spark.hadoop.fs.s3a.secret.key", "4IFrgFNlfvS73WGq0D0OQYdEhCoKw4tuzb7Msoaz")
+    .config("spark.hadoop.fs.s3a.endpoint", "http://myminio-hl.minio-tenant.svc.cluster.local:9000")
+    .config("spark.hadoop.fs.s3a.path.style.access", "true")
+
+NOTE THAT WE NEED TO PUT NOT ONLY THE CONFIGURATION TO CONNECT TO NESSIE BUT ALSO THE CONNECTION TO S3/MINIO, THAT'S BECAUSE THE ROLE OF NESSIE IS ONLY TO ACT AS AN INTERPRETER BETWEEN SPARK AND ICEBERG DATA AND METADATA STORED IN MINIO, IT ONLY MAKES THE READING AND WRITING ON S3, BUT EVERYTHING IS STORED IS S3.
+
+
+
+
+ 
