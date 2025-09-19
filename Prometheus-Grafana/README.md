@@ -1,0 +1,5 @@
+# Prometheus-grafana stack
+Prometheus as well as grafana have dedicated operators in k8s that automate the deployment of this services. When we install an operator the kubernetes API gets extended with new callable objects named CRs besides services, pods, stateful sets, etc...  This CRs have kubernetes embedded logic done with core kubernetes components, they are nothing more than a tunnable set of deployments, pods, PVCs, services, or any other kubernetes components each configured to coordinate with the rest and contribute to create what a CR is asking for.
+
+The Prometheus operator comes with multiple CRs that can be instantiated insdide a kubernetes cluster after it has been deployed itself on the first place. All prometheus and grafana yamls constitute a minimal deployment that integrates with the kafka deployment to scrape kafka metrics. Is this case, I have filled the yaml files for both prometheus and grafana with comentaries that help understand how and why they are made configured in the way they are. 
+
