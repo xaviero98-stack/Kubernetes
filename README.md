@@ -3,4 +3,8 @@ That repository contains the necessary instructions to set up kubernetes cluster
 So far, I've been able to successfully deploy Spark on Kubernetes, Kafka, Minio, Prometheus, Grafana, Project Nessie (versioned Hive Metastore) that stores Iceberg tables on S3 through Spark. Now I'll start experimenting with ElasticSearch, AirFlow, Neo4j, MongoDB, Flink, Cassandra, Milvus and Kubeflow and other Big Data software to replicate production-like environments and conditions, including things like high availability, fault tolerance, etc...
 Each new technology will have it's own folder with text/markdown/yaml files that explain how to set it up inside the cluster and how to integrate it with the other technologies.
 Here are two diagrams of the homelab to ilustrate how the Kubernetes cluster is set up and upon which devices it is set up.
+
 ![Kubernetes architecture](k8s-diagram.png)
+
+
+
