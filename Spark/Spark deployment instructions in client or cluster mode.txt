@@ -983,7 +983,8 @@ df.writeTo("my_catalog.demo_tabla").append()
 df_leido = spark.read.format("iceberg").table("my_catalog.demo_tabla")
 df_leido.show()
 
-- THIS ONE USES PROJECT NESSIE INSTEAD WHICH ENABLES VERSIONING OF THE CATALOG ON A GITHUB-LIKE BASIS:
+- THIS ONE USES PROJECT NESSIE INSTEAD WHICH ENABLES VERSIONING OF THE CATALOG ON A GITHUB-LIKE BASIS. ¡¡¡TAKE INTO ACCOUNT THAT NESSIE MUST HAVE BEEN DEPLOYED FIRST!!! THE NESSIE CONFIGURATION THAT IS COMPATIBLE WITH THIS COMMAND IS ON THE NESSIE DIRECTORY HERE IN GITHUB.
+
 
 from pyspark.sql import SparkSession
 from pyspark.sql import Row
@@ -1040,6 +1041,7 @@ CREATE BRANCH dev IN nessie FROM main
 spark.sql("LIST REFERENCES IN nessie").show(truncate=False)
 
 TO SEE ALL DEPLOYMENT DETAILS I HAVE POSTED THE  spark-driver.yaml YAML WITH ALL NECESSARY COMPONENTS TO BE USED IN kubectl apply -f spark-driver.yaml  
+
 
 
 
