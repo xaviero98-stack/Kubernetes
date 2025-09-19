@@ -11,7 +11,7 @@ Here are two diagrams,  the first one ilustrates how the Kubernetes cluster is s
 
 ![Kubernetes architecture](k8s-dgram.png)
 
-And the base network and conections upon which the kubernetes cluster is set up.
+And the base network of devices upon which the kubernetes cluster is set up.
 
 ![Kubernetes architecture](homelab.png)
 
