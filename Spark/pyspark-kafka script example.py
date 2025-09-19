@@ -1,7 +1,22 @@
 from pyspark.sql.functions import to_json, struct, col, expr, row_number, from_json
 from pyspark.sql.window import Window
 from pyspark.sql.types import StructType, StringType, IntegerType
+from pyspark.sql import SparkSession
 
+# Creamos la sesión de Spark con configuración para Kubernetes
+spark = (
+    SparkSession.builder
+    .appName("JupyterSparkApp")
+    .master("k8s://https://192.168.1.150:6443")
+    .config("spark.submit.deployMode", "client")
+    .config("spark.driver.host", "spark-driver-headless.default.svc.cluster.local")
+    .config("spark.driver.port", "7077")
+    .config("spark.driver.bindAddress", "0.0.0.0")
+    .config("spark.executor.instances", "2")
+    .config("spark.kubernetes.container.image", "bitnami/spark:3.5.6")
+    .config("spark.kubernetes.executor.deleteOnTermination", "true")
+    .getOrCreate()
+)
 data = [("Alice", 34), ("Bob", 45), ("Charlie", 29)]
 columns = ["name", "age"]
 df = spark.createDataFrame(data, columns)
@@ -54,3 +69,4 @@ query = df_json.writeStream \
     .start()
 
 query.awaitTermination()
+
