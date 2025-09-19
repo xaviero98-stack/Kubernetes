@@ -1,0 +1,39 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: source
+spec:
+  datasource:
+    access: proxy # Whether the user's browser makes the HTTP requests or it's grafana itself who does it acting as a proxy. In my case there's no browser inside the kubernetes cluster and there's nothing
+                  # to gain configuring extra steps when grafana can make it by itself.  
+    isDefault: true # Set this datasource as the deafult option for dashboards.
+    jsonData:
+      timeInterval: 5s
+      tlsSkipVerify: true
+    name: prometheus # The name you will see on the UI when selecting datasources to make your dashboards. 
+    type: prometheus # The type of the source.
+    url: 'http://prometheus-operated:9090' # How to find prometheus (must be the same kubernetes service same that prometheus operator created)
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana # To what grafana instance deployed un kubernetes should this data source send the data.
+  plugins: # PLugins stated here doesn't have any direct effect on grafana. It is rather a check to see if the grafana instance contains these plugins. If they are not present on grafana CR some warning
+           # might appear somwhere 
+    - name: grafana-clock-panel
+      version: 1.3.0
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  labels:
+    dashboards: grafana # The labels that must be present on dashboard CRs (and apparently datasource CRs) so that this instance pays attention to these CRs and links to them. 
+    folders: grafana # Tha same but for foulders CRs
+  name: grafana # The same but more generic
+spec:
+  config:
+    auth:
+      disable_login_form: 'false' # If true requieres external verification such as OAuth, LDAP, etc.
+    log:
+      mode: console #The place where grafana writes it's logs, in this case on console instead of writing them in files. Like "kubectl logs... " if it's console.
+    security:
+      admin_password: start
+      admin_user: admin # user and password are set in these last two lines. They will be requested while entering the UI. It's possible to use a secret if necessary. 

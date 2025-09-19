@@ -1,0 +1,120 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-server
+  labels:
+    app: strimzi
+rules:
+  - apiGroups: [""]  # Each APIGroup contains/defines various kubernetes components like ingresses, this one is core.
+    resources:
+      - nodes
+      - nodes/proxy
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups: # This APIGroup references networking-specific components, the same way operators extend API with CRDs
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics"] # This get permission is not associated with any particular resource.
+    verbs: ["get"] # This allows the role to make GET calls at the path /metrics of the kuberbetes API server
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-server
+  namespace: monitoring
+  labels:
+    app: strimzi
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-server
+  labels:
+    app: strimzi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-server
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-server
+    namespace: monitoring
+
+---
+
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: prometheus
+# SHOULD INCLUDE namespace: monitoring
+  labels:
+    app: strimzi
+spec:
+  replicas: 1
+  serviceAccountName: prometheus-server
+  podMonitorSelector:
+    matchLabels:
+      app: strimzi
+  serviceMonitorSelector: {}
+  resources:
+    requests:
+      memory: 400Mi
+  enableAdminAPI: false
+
+---
+
+# THIS IS AN EXAMPLE WITH KAFKA PUT THE PROCESS IS THE SAME FOR ANY OTHER TECHNOLOGÍES RUNNING ON KUBERNETES, YOU JUST HAVE TO ADD MORE PodMonitors FOR EVERY KUBERNETES SERVICE YOU WANT TO SUPERVISE, THAT'S ALL.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: kafka-resources-metrics
+  labels:
+    app: strimzi
+spec:
+  selector:
+    matchExpressions:
+      - key: "strimzi.io/kind"
+        operator: In
+        values: ["Kafka"]
+  namespaceSelector:
+    matchNames:
+      - kafka
+  podMetricsEndpoints:
+# That's a reference to the opened port on kafka pods, if you have to know the info about that you can just put: "kubectl get pod -n kafka -l strimzi.io/cluster=my-clusterx -o yaml | grep -A5 ports"
+# You will see all UNIQUE types of existing ports on all pods. If you also use "kubectl get pod -n kafka -l strimzi.io/cluster=my-clusterx -o yaml" you can see that every kakfa broker + the exporter
+# have the port 9404 called tcp-prometheus, that's how you are scraping from jmxExporter and kafkaExporter at the same time with a single port reference, remember you will scrape that port on all pods
+# label "strimzi.io/kind: Kafka".
+  - path: /metrics
+    port: tcp-prometheus
+    relabelings:
+    - separator: ;
+      regex: __meta_kubernetes_pod_label_(strimzi_io_.+)
+      replacement: $1
+      action: labelmap
+    - sourceLabels: [__meta_kubernetes_namespace]
+      separator: ;
+      regex: (.*)
+      targetLabel: namespace
+      replacement: $1
+      action: replace
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      separator: ;
+      regex: (.*)
+      targetLabel: kubernetes_pod_name
+      replacement: $1
+      action: replace
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      separator: ;
+      regex: (.*)
+      targetLabel: node_name
+      replacement: $1
+      action: replace
