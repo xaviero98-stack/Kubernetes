@@ -6,5 +6,7 @@ Here are two diagrams of the homelab to ilustrate how the Kubernetes cluster is 
 
 ![Kubernetes architecture](k8s-diagram.png)
 
+![Kubernetes architecture](homelab.png)
+
 
 
