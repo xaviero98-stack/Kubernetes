@@ -1522,3 +1522,8 @@ kube-system        kube-scheduler-controlplane                1/1     Running   
 kube-system        metrics-server-74f5944674-xvfzn            1/1     Running   0              17m     192.168.1.151    ubuntu         <none>           <none>
 tigera-operator    tigera-operator-7d68577dc5-m52jh           1/1     Running   22 (57m ago)   6h4m    192.168.1.151    ubuntu         <none>           <none>
 
+FURTHER RESOLVED PROBLEMS:
+
+- Recently I stumbled with a problem while using pyspark on kubernetes where because I was referencing the driver pod through a headless service and used the DNS reference on the spark-submit command. It took some debugging to realize that one of the nodes didn't have the corresponding coredns pod running inside it so DNS addresses were not resolvable in when the driver pod was generated on that pod. I then changes the DNS deployment on kube-system its functionally-identical alternative using a Daemonset to ensure that wouldn't happen again. Now everything work fine and perhaps I've managed to also get rid of the bad initialization of Kafka and KafkaNodePools CRs while using strimzi operator to run it. Perhaps some of the pods also relie on resolvable DNS addresses for the deployment. 
+
+
