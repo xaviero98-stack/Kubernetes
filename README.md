@@ -4,7 +4,7 @@ So far, I've been able to successfully deploy Spark on Kubernetes, Kafka, Minio,
 Each new technology will have it's own folder with text/markdown/yaml files that explain how to set it up inside the cluster and how to integrate it with the other technologies.
 Here are two diagrams of the homelab to ilustrate how the Kubernetes cluster is set up and upon which devices it is set up.
 
-![Kubernetes architecture](k8s-diagram.png)
+![Kubernetes architecture](k8s-dgram.png)
 
 ![Kubernetes architecture](homelab.png)
 
