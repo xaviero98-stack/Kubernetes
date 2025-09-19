@@ -1,0 +1,136 @@
+vboxuser@controlplane:~$ sudo apt install python3 python3-pip -y
+vboxuser@controlplane:~$ pip3 install jupyterlab
+vboxuser@controlplane:~$ python3 -m venv ~/myenv
+vboxuser@controlplane:~$ sudo apt install python3.12-venv
+vboxuser@controlplane:~$ python3 -m venv ~/myenv
+vboxuser@controlplane:~$ source ~/myenv/bin/activate
+(myenv) vboxuser@controlplane:~$ pip install --upgrade pip
+(myenv) vboxuser@controlplane:~$ pip install jupyterlab
+(myenv) vboxuser@controlplane:~$ export SPARK_HOME=~/spark-4.0.0-bin-hadoop3
+export PATH=$SPARK_HOME/bin:$PATH
+export PYSPARK_PYTHON=python3
+export PYSPARK_DRIVER_PYTHON=jupyter
+export PYSPARK_DRIVER_PYTHON_OPTS="lab --ip=0.0.0.0 --port=8888 --no-browser"
+(myenv) vboxuser@controlplane:~$ cd ./spark-4*/
+(myenv) vboxuser@controlplane:~/spark-4.0.0-bin-hadoop3$ cd ./bin/
+
+...
+
+(myenv) vboxuser@controlplane:~/spark-4.0.0-bin-hadoop3/bin$ pyspark \
+  --master k8s://https://192.168.1.150:6443 \
+  --conf spark.submit.deployMode=client \
+  --conf spark.driver.host=192.168.1.150 \
+  --conf spark.driver.bindAddress=0.0.0.0 \
+  --conf spark.executor.instances=2 \
+  --conf spark.kubernetes.container.image=bitnami/spark:4.0.0 \
+  --conf spark.kubernetes.executor.deleteOnTermination=true
+
+WE DO A DOCKER FILE TO IMITATE THIS CONFIGURATION AND THEN WE PUSH IT TO A DOCKER HUB REPOSITORY SO THAT IT'S READY TO BE USED FROM A Kubernetes CLUSTER:
+
+FROM python:3.12-slim
+
+# INSTALL SYSTEM DEPENDENCIES
+RUN apt-get update && apt-get install -y \
+    curl \
+    bash \
+    openjdk-17-jdk-headless \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# AUTOMATICALLY DETECTS JAVA PATHS:
+RUN if [ -d "/usr/lib/jvm/java-17-openjdk-arm64" ]; then \
+        echo "export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64" >> /etc/profile.d/java_home.sh; \
+    elif [ -d "/usr/lib/jvm/java-17-openjdk-amd64" ]; then \
+        echo "export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> /etc/profile.d/java_home.sh; \
+    fi && chmod +x /etc/profile.d/java_home.sh
+
+# ADD SPARK AND JUPYTER
+ENV SPARK_VERSION=4.0.0 \
+    HADOOP_VERSION=3 \
+    SPARK_HOME=/opt/spark \
+    PATH=/opt/spark/bin:$PATH \
+    PYSPARK_PYTHON=python3 \
+    PYSPARK_DRIVER_PYTHON=jupyter \
+    PYSPARK_DRIVER_PYTHON_OPTS="lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root"
+
+# INSTALL NECESSARY PYTHON LIBRARIES
+RUN pip install --upgrade pip \
+ && pip install jupyterlab pyspark==${SPARK_VERSION}
+
+# DOWNLOADS AND INSTALLS SPARK
+RUN curl -fsSL https://downloads.apache.org/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz \
+ | tar -xz -C /opt \
+ && mv /opt/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} $SPARK_HOME
+
+# EXPOSE JUPYTERLAB PORT
+EXPOSE 8888
+
+# SETS THE WORK DIRECTORY
+WORKDIR /workspace
+
+# MAINTAINS THE POD ALIVE BECAUSE IT IS NOT A CLOSED EXECUTION
+CMD ["tail", "-f", "/dev/null"]
+
+# WITH THAT CREATED WE SIMULTANEOUSLY CREATE THE IMAGE AND PUSH IT TO A REPOSITORY (in this case mine, xavier418/spark-driver:4.0.0 --push):
+ 
+PS C:\Users\Usuario\Downloads\Kubernetes\Desplegar_Spark_nativo_kubernetes> docker buildx build --platform linux/amd64,linux/arm64 -t xavier418/spark-driver:4.0.0 --push .
+[+] Building 744.7s (21/21) FINISHED                                                               docker:desktop-linux
+ => [internal] load build definition from Dockerfile                                                               0.0s
+ => => transferring dockerfile: 1.59kB                                                                             0.0s
+ => [linux/arm64 internal] load metadata for docker.io/library/python:3.12-slim                                    1.0s
+ => [linux/amd64 internal] load metadata for docker.io/library/python:3.12-slim                                    1.0s
+ => [auth] library/python:pull token for registry-1.docker.io                                                      0.0s
+ => [internal] load .dockerignore                                                                                  0.0s
+ => => transferring context: 2B                                                                                    0.0s
+ => [linux/amd64 1/6] FROM docker.io/library/python:3.12-slim@sha256:4600f71648e110b005bf7bca92dbb335e549e6b27f2e  0.0s
+ => => resolve docker.io/library/python:3.12-slim@sha256:4600f71648e110b005bf7bca92dbb335e549e6b27f2e83fceee5e11b  0.0s
+ => [linux/arm64 1/6] FROM docker.io/library/python:3.12-slim@sha256:4600f71648e110b005bf7bca92dbb335e549e6b27f2e  0.0s
+ => => resolve docker.io/library/python:3.12-slim@sha256:4600f71648e110b005bf7bca92dbb335e549e6b27f2e83fceee5e11b  0.0s
+ => CACHED [linux/amd64 2/6] RUN apt-get update && apt-get install -y     curl     bash     openjdk-17-jdk-headle  0.0s
+ => CACHED [linux/amd64 3/6] RUN if [ -d "/usr/lib/jvm/java-17-openjdk-arm64" ]; then         echo "export JAVA_H  0.0s
+ => CACHED [linux/arm64 2/6] RUN apt-get update && apt-get install -y     curl     bash     openjdk-17-jdk-headle  0.0s
+ => CACHED [linux/arm64 3/6] RUN if [ -d "/usr/lib/jvm/java-17-openjdk-arm64" ]; then         echo "export JAVA_H  0.0s
+ => [linux/amd64 4/6] RUN pip install --upgrade pip  && pip install jupyterlab pyspark==4.0.0                     75.9s
+ => [linux/arm64 4/6] RUN pip install --upgrade pip  && pip install jupyterlab pyspark==4.0.0                    320.5s
+ => [linux/amd64 5/6] RUN curl -fsSL https://downloads.apache.org/spark/spark-4.0.0/spark-4.0.0-bin-hadoop3.tgz   23.3s
+ => [linux/amd64 6/6] WORKDIR /workspace                                                                           0.1s
+ => [linux/arm64 5/6] RUN curl -fsSL https://downloads.apache.org/spark/spark-4.0.0/spark-4.0.0-bin-hadoop3.tgz   37.3s
+ => [linux/arm64 6/6] WORKDIR /workspace                                                                           0.0s
+ => exporting to image                                                                                           379.8s
+ => => exporting layers                                                                                           72.6s
+ => => exporting manifest sha256:59e3a004b3fbf09276a283edc00990025ae20c6ccc6dd1978a39cd6806548090                  0.0s
+ => => exporting config sha256:85aa431c64701e005ad6b0dfc4e05d1d9be36e84a1c37094fdaf1e062fad39e1                    0.0s
+ => => exporting attestation manifest sha256:c932b640aef46c75688eff367ba367f8dfdb81529e125b6a1e430e41e93daa7c      0.0s
+ => => exporting manifest sha256:65e324a795de2c9122e4b553c0390d156f05458774cf33799f0797766470bac6                  0.0s
+ => => exporting config sha256:e05df7da7fb9e9ee47d903cc0028c0e00d2184304f8e34b93da591f9df1f95b2                    0.0s
+ => => exporting attestation manifest sha256:66b55c50c3b12d533be2646ba4013918618140be23557ad039945ef18dce2f36      0.0s
+ => => exporting manifest list sha256:ab96f8cbadb46705e716bc29ab299450e8cbbdfb722df7c58aea1a9289f76b3d             0.0s
+ => => naming to docker.io/xavier418/spark-driver:4.0.0                                                            0.0s
+ => => unpacking to docker.io/xavier418/spark-driver:4.0.0                                                        13.6s
+ => => pushing layers                                                                                            289.1s
+ => => pushing manifest for docker.io/xavier418/spark-driver:4.0.0@sha256:ab96f8cbadb46705e716bc29ab299450e8cbbdf  4.3s
+ => [auth] xavier418/spark-driver:pull,push token for registry-1.docker.io                                         0.0s
+ => [auth] xavier418/spark-driver:pull,push token for registry-1.docker.io                                         0.0s
+ => pushing xavier418/spark-driver:4.0.0 with docker                                                               4.0s
+ => => pushing layer fa231cc2ee17                                                                                  3.8s
+ => => pushing layer df0f7b304e58                                                                                  3.8s
+ => => pushing layer 1d9b552ef8e0                                                                                  3.8s
+ => => pushing layer 9fb4d99b1d43                                                                                  3.8s
+ => => pushing layer 6e4350c47daf                                                                                  3.8s
+ => => pushing layer 3dd0a896b322                                                                                  3.8s
+ => => pushing layer 3da95a905ed5                                                                                  3.8s
+ => => pushing layer a28b0ad00fe5                                                                                  3.8s
+ => => pushing layer 9767523a362c                                                                                  3.8s
+ => => pushing layer 4261af336b3d                                                                                  3.8s
+ => => pushing layer bed1fcf3f9ce                                                                                  3.8s
+ => => pushing layer 3273cb86c9c6                                                                                  3.8s
+ => => pushing layer 3fcac4ae81b8                                                                                  3.8s
+ => => pushing layer ece23617e805                                                                                  3.8s
+ => => pushing layer 3c3b4b852f07                                                                                  3.8s
+ => => pushing layer 009ddaf357d4                                                                                  3.8s
+ => => pushing layer 1e3ecb0567f5                                                                                  3.8s
+ => => pushing layer 79a659015973                                                                                  3.8s
+ => => pushing layer 37259e733066                                                                                  3.8s
+ => => pushing layer 6e88b4602d85                                                                                  3.8s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/ziazf82rnmhc907y8t3c2crvq
+PS C:\Users\Usuario\Downloads\Kubernetes\Desplegar_Spark_nativo_kubernetes>
