@@ -884,6 +884,7 @@ pyspark \
   --master k8s://https://192.168.1.150:6443 \
   --conf spark.submit.deployMode=client \
   --conf spark.driver.host=spark-driver-headless.default.svc.cluster.local \
+  --conf spark.driver.port=7077 \
   --conf spark.driver.bindAddress=0.0.0.0 \
   --conf spark.executor.instances=2 \
   --conf spark.kubernetes.container.image=bitnami/spark:3.5.6 \ # THAT WILL DEPEND ON THE VERSION OF SPARK WE USE
@@ -917,6 +918,7 @@ spark = (
     .master("k8s://https://192.168.1.150:6443")
     .config("spark.submit.deployMode", "client")
     .config("spark.driver.host", "spark-driver-headless.default.svc.cluster.local")
+    .config("spark.driver.port", "7077")
     .config("spark.driver.bindAddress", "0.0.0.0")
     .config("spark.executor.instances", "2")
     .config("spark.kubernetes.container.image", "bitnami/spark:3.5.6")
@@ -949,6 +951,7 @@ spark = (
     .master("k8s://https://192.168.1.150:6443")
     .config("spark.submit.deployMode", "client")
     .config("spark.driver.host", "spark-driver-headless.default.svc.cluster.local")
+    .config("spark.driver.port", "7077")
     .config("spark.driver.bindAddress", "0.0.0.0")
     .config("spark.executor.instances", "2")
     .config("spark.kubernetes.container.image", "bitnami/spark:3.5.6")
@@ -995,6 +998,7 @@ spark = (
     .master("k8s://https://192.168.1.150:6443")
     .config("spark.submit.deployMode", "client")
     .config("spark.driver.host", "spark-driver-headless.default.svc.cluster.local")
+    .config("spark.driver.port", "7077")
     .config("spark.driver.bindAddress", "0.0.0.0")
     .config("spark.executor.instances", "2")
     .config("spark.kubernetes.container.image", "bitnami/spark:3.5.6")
@@ -1041,6 +1045,7 @@ CREATE BRANCH dev IN nessie FROM main
 spark.sql("LIST REFERENCES IN nessie").show(truncate=False)
 
 TO SEE ALL DEPLOYMENT DETAILS I HAVE POSTED THE  spark-driver.yaml YAML WITH ALL NECESSARY COMPONENTS TO BE USED IN kubectl apply -f spark-driver.yaml  
+
 
 
 
