@@ -54,7 +54,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: Prometheus
 metadata:
   name: prometheus
-# SHOULD INCLUDE namespace: monitoring
+  namespace: monitoring
   labels:
     app: strimzi
 spec:
@@ -71,7 +71,7 @@ spec:
 
 ---
 
-# THIS IS AN EXAMPLE WITH KAFKA PUT THE PROCESS IS THE SAME FOR ANY OTHER TECHNOLOGÍES RUNNING ON KUBERNETES, YOU JUST HAVE TO ADD MORE PodMonitors FOR EVERY KUBERNETES SERVICE YOU WANT TO SUPERVISE, THAT'S ALL.
+# THIS IS AN EXAMPLE WITH KAFKA PUT THE PROCESS IS THE SAME FOR ANY OTHER TECHNOLOGÍES RUNNING ON KUBERNETES, YOU JUST HAVE TO ADD MORE podMonitors OR MAKE A GIVEN podMonitor SCRAPE VARIOUS SOURCES FOR EVERY KUBERNETES SERVICE YOU WANT TO MONITOR.
 
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
