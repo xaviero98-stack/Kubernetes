@@ -1,0 +1,50 @@
+Once you create MinIO, you can change the console service to NodePort so that you can easily access it from the browser. This is done with the following command:
+
+vboxuser@controlplane:~/minio$ kubectl patch svc myminio-console -n minio-tenant -p '{"spec": {"type": "NodePort"}}'
+
+
+Remember that if you create two servers and inside them you configure two volumesPerServer, that makes a total of 4 volumes. So, we create two PVs two one node and another two on the other.
+
+Users and permissions work in the following way:
+
+First, we have the root user, which is the admin. This user has access to everything and is so high up that it doesn’t even appear under Identity -> Users in the console, since that console is meant to manage others while the root user exists above it. It was created in this part of the YAML:
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: storage-configuration
+  namespace: minio-tenant
+stringData:
+  config.env: |-
+    export MINIO_ROOT_USER="minio"
+    export MINIO_ROOT_PASSWORD="minio123"
+    export MINIO_STORAGE_CLASS_STANDARD="EC:2"
+    export MINIO_BROWSER="on"
+type: Opaque
+
+Then we have users that are below, for example in my case the console user. This one does appear listed, since its permissions — what it can or cannot do with certain buckets — can be defined at any time by the root user. It is defined here:
+
+apiVersion: v1
+data:
+  CONSOLE_ACCESS_KEY: Y29uc29sZQ==
+  CONSOLE_SECRET_KEY: Y29uc29sZTEyMw==
+kind: Secret
+metadata:
+  name: storage-user
+  namespace: minio-tenant
+type: Opaque
+
+Notice that once secrets are created they become opaque so that they cannot be viewed, so I don’t really understand why we should encrypt them in base64 — but well, I guess it’s an industry standard.
+
+Finally, we have the access + secret key pairs of MinIO. These have nothing to do with the access + secret keys stored in the Kubernetes Secret, which simply contains the username and password to log into the MinIO console at the beginning. The MinIO ones are used to grant the same permissions that the user who created them has over the MinIO buckets to other applications, such as Nessie, so they can access and modify the bucket’s data.
+
+For the root user:
+
+Access key:
+DntpVaf6QiCkEvTXS5UH
+Secret key:
+4IFrgFNlfvS73WGq0D0OQYdEhCoKw4tuzb7Msoaz
+
+Be careful with Nessie + MinIO regarding the following:
+Use path-style=true in Nessie + BucketDNS=false in the MinIO YAML, or path-style=false + BucketDNS=true.
+Depending on the option you set, the HTTP endpoint for Nessie will change.
