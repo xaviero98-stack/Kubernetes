@@ -3,5 +3,7 @@ Here's a basic deployment of Kafka using the Kafka and KafkaNodePool CRs from St
 
 I have also dug a bit on how Kafka Connect works and it is also completely deployable using strimzi for further integration with technologies such as NoSQL databases or S3-like storage environments through open connector deployable from the connectors hub on confluent webpage.
 
+There's also the yaml __kdrop.yaml__ that helps to make an overlook actual state on topics and the data flowing through them.
+
 Finally there is also a debugging note where I discuss some empiric solutions that have proven to work out and possible explanation as to why they possibily do it.
 
