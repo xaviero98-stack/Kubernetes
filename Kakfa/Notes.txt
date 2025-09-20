@@ -1,0 +1,9 @@
+Be careful when you close the kubernetes cluster. 
+You have to first close every deployment strimzi has made and close all nodes besides controlplane.
+ 
+Otherwise you will have to delete every strimzi deployment, turn all nodes off
+and restart control plane first and then the rest of the nodes. Lastly, you can restart the operator (I just delete the pod, the deployment will generate another) and deploy the same kafka CRs. 
+
+That's bacause Strimzi makes Kafka resilient but is not resilient itself and it's not prepared to undergo an entire shut down of the underlying kubernetes cluster where it is running on.
+
+ALSO FOR SOME REASON I HAVE FOUND IMPOSSIBLE TO USE SPARK 3.5.6 FOR KAFKA, ONLY 4.0.0 VERSION WITH THE CORRESPONDING PACKAGE.
