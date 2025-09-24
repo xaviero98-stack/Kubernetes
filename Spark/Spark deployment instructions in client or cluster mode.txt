@@ -1006,7 +1006,7 @@ spark = (
     .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.103.3,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262")
     .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,org.projectnessie.spark.extensions.NessieSparkSessionExtensions")
     .config("spark.sql.catalog.nessie", "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.nessie.uri", "http://nessie.minio-tenant.svc.cluster.local:19120/api/v1")
+    .config("spark.sql.catalog.nessie.uri", "http://nessie.nessie-ns.svc.cluster.local:19120/api/v1")
     .config("spark.sql.catalog.nessie.ref", "main")
     .config("spark.sql.catalog.nessie.authentication.type", "NONE")
     .config("spark.sql.catalog.nessie.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog")
@@ -1045,6 +1045,7 @@ CREATE BRANCH dev IN nessie FROM main
 spark.sql("LIST REFERENCES IN nessie").show(truncate=False)
 
 TO SEE ALL DEPLOYMENT DETAILS I HAVE POSTED THE  spark-driver.yaml YAML WITH ALL NECESSARY COMPONENTS TO BE USED IN kubectl apply -f spark-driver.yaml  
+
 
 
 
