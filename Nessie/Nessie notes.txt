@@ -32,7 +32,7 @@ helm install -n nessie-ns nessie nessie-helm/nessie -f values.yaml
     .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.103.3,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262")
     .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,org.projectnessie.spark.extensions.NessieSparkSessionExtensions")
     .config("spark.sql.catalog.nessie", "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.nessie.uri", "http://nessie.minio-tenant.svc.cluster.local:19120/api/v1")
+    .config("spark.sql.catalog.nessie.uri", "http://nessie.nessie-ns.svc.cluster.local:19120/api/v1")
     .config("spark.sql.catalog.nessie.ref", "main")
     .config("spark.sql.catalog.nessie.authentication.type", "NONE")
     .config("spark.sql.catalog.nessie.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog")
@@ -43,6 +43,7 @@ helm install -n nessie-ns nessie nessie-helm/nessie -f values.yaml
     .config("spark.hadoop.fs.s3a.path.style.access", "true")
 
 NOTE THAT WE NEED TO PUT NOT ONLY THE CONFIGURATION TO CONNECT TO NESSIE BUT ALSO THE CONNECTION TO S3/MINIO, THAT'S BECAUSE THE ROLE OF NESSIE IS ONLY TO ACT AS AN INTERPRETER BETWEEN SPARK AND ICEBERG DATA AND METADATA STORED IN MINIO, IT ONLY MAKES THE READING AND WRITING ON S3, BUT EVERYTHING IS STORED IS S3.
+
 
 
 
