@@ -387,7 +387,7 @@ spec:
   storage:
     type: jbod # Just a Bunch of Disks, option that when enabled allows a single broker to use various PVs, not really necessary
 # since we set the storage to ephemeral.
-volumes:
+    volumes:
       - id: 0
         type: ephemeral
         sizeLimit: 15Gi
