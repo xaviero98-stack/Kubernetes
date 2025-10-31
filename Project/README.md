@@ -8,7 +8,7 @@ Data Architecture
 
 This will be the overall data architecture:
 
-![Kubernetes architecture](Project.drawio.png)
+![Kubernetes architecture](Project.drawo.png)
 
 By the end of the project, we will have an operational database hosted on MongoDB, whose changes are monitored using the Debezium connector for Change Data Capture (CDC) running in Kafka Connect.
 
