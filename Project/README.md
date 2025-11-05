@@ -2073,14 +2073,236 @@ kubectl create secret tls trino-tls \
   -n trino
 ```
 
-Once you have it, you will see the secret there (the rest will not be visible yet) using:
+Once you have it, you will see the secret there (the rest of the secrets will not be visible yet) using:
 
 ```bash
 kubectl get secret -n trino
 ```
 <img width="652" height="118" alt="image" src="https://github.com/user-attachments/assets/b839131b-556a-4f8d-906d-eac766324575" />
 
+Finally, we can deploy the Trino itself using the oficial Helm Chart, but first, we have to write the values.yaml file, the configuratoin we display on the yaml file is the following one:
 
+```bash
+catalogs:
+  lakehouse: |-
+    connector.name=iceberg
+    iceberg.catalog.type=nessie
+    iceberg.nessie-catalog.uri=http://nessie.nessie-ns.svc.cluster.local:19120/api/v1
+    iceberg.nessie-catalog.default-warehouse-dir=s3://synthetic
+    iceberg.nessie-catalog.ref=main
+    fs.native-s3.enabled=true
+    s3.region=local
+    s3.endpoint=http://myminio-hl.minio-tenant.svc.cluster.local:9000
+    s3.path-style-access=true
+    s3.aws-access-key=wGyHqcx43ZGp86XtqWm8
+    s3.aws-secret-key=89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4
+  rest: |-
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://iceberg-rest.default.svc.cluster.local:8181
+    fs.native-s3.enabled=true
+    s3.region=us-east-1
+    s3.endpoint=http://myminio-hl.minio-tenant.svc.cluster.local:9000
+    s3.path-style-access=true
+    s3.aws-access-key=wGyHqcx43ZGp86XtqWm8
+    s3.aws-secret-key=89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4
+
+# helm install trino-cluster trino/trino --namespace trino --create-namespace -f values.yaml
+
+server:
+  config:
+    authenticationType: "PASSWORD" # TO USE THIS AUTHENTICATION TYPE "PASSWORD" TLS MUST BE ENABLED, WE CAN CREATE TLS INSIDE THE TRINO HTTP-SERVER ITSELF OR THE PROPERTY http-server.process-forwarded=true
+  coordinatorExtraConfig: |-
+    http-server.process-forwarded=true
+    # THIS OPTION TELLS TRINO TO EXPECT TLS ENCRYPTION ON THE ENDPOINTS WHEREBY THE TRAFFIC WILL COME INSTEAD OF CREATING IT ITSELF. LIKE SAYING "EXPECT OUTSOURCED TLS"
+    internal-communication.shared-secret=UNilVtC161yxNr9wl634iY9GnrenjgLx9cYkr0oAzL/P/ZbpJXftSo/qG4z5Xl/jsmhLQI7G6O5buzd9FHpKN5zxutjxsFyPz7NV3FHW1qaoFiSaC3r8XIFSo03w5seMV4DWugy6OZ7KhwQIV59+3Kx1hNgWg12ntmRj
+  workerExtraConfig: |-
+    internal-communication.shared-secret=UNilVtC161yxNr9wl634iY9GnrenjgLx9cYkr0oAzL/P/ZbpJXftSo/qG4z5Xl/jsmhLQI7G6O5buzd9FHpKN5zxutjxsFyPz7NV3FHW1qaoFiSaC3r8XIFSo03w5seMV4DWugy6OZ7KhwQIV59+3Kx1hNgWg12ntmRj
+    # THIS SHARED SECRET MUST ALSO BE INCLUDED IF YOU WANT RO USE PASSWORD AND TLS PROPERTIES, BESIDES IT MUST BE PRESENT IN BOTH coordinator AND worker INSTANCES AS WE CAN SEE ABOVE.
+auth:
+  passwordAuth: "xavier:$2y$12$Nd88rwv86wEWpJdW0y1uBeN1KXBlsfrciuh4tN8Zx7t3JTmYMIw/u" # The password is 1234 but we have to use bcrypt, with a cost factor of 12, we can use a python script to generate it.
+
+coordinator:
+  affinity: # affinity VALUE FOLLOWS THE SAME GENERAL AFFINITY STRUCTURE AS ANY OTHER KUBERNETES YAML
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - ubuntu
+                  - ubuntu2
+
+worker:
+  affinity: # AND WE SCHEDULE BOTH TYPES OF TRINO PODS TO BE CREATED IN ONE OF THE WORKER NODES OF THE KUBERNETES SERVICE
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - ubuntu
+                  - ubuntu2
+```
+
+Once we have the values we deploy the helm chart using them:
+
+```bash
+helm install trino-cluster trino/trino --namespace trino --create-namespace -f values.yaml
+```
+And we will see the following Kubernetes components deployed on the namespace:
+
+<img width="938" height="340" alt="image" src="https://github.com/user-attachments/assets/4d44c105-8a97-4925-9533-bfc7c111e2b8" />
+
+And the last step that wraps it all up will be the creation of the Ingress that points to the service and port trino-cluster-trino:8080 from the traefik Load Balancer, we will create the Ingress like that:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: trino-ingress
+  namespace: trino
+  annotations:
+    kubernetes.io/ingress.class: traefik # WE USE TRAEFIK DEPLOYMENT AND ITS LOAD BALANCER
+spec:
+  tls:
+    - hosts:
+        - trino.local # ENABLE TLS FOR THIS HOST
+      secretName: trino-tls # THATS THE SECRET NAME THAT KUBERNETES WILL USE WITH THE trino.key AND trino.crt.
+  rules:
+    - host: trino.local # THE HOST TO USE
+      http:
+        paths:
+          - path: / # THIS IS THE INEXISTENT PATH, ONLY USE trino.local ON THE BROWSER
+            pathType: Prefix
+            backend: # WHAT INNER KUBERNETES COMPONENT WILL BE CONNECTED TO THE HOSTPATH trino.local, THE SERVICE BELOW
+              service:
+                name: trino-cluster-trino
+                port:
+                  number: 8080
+```
+
+Now, one last step before we can use it. In the machine that will be used to connect to Trino we need to go to its hosts file and append a line like with the structure '(one of the Kubernetes nodes IPs)  trino.local'. **Not separated by spaces but by a Tab**. In my case with Windows we find it in **C:\Windows\System32\drivers\etc**:
+
+<img width="831" height="803" alt="image" src="https://github.com/user-attachments/assets/4ebe66a0-7fbc-4367-b92e-d618fea68362" />
+
+Apparently, it can work with Tab as well as spaces based on the rest of the matches, needless to say you should **not touch or erase any of the lines** there except if you know exactly what you're doing, as an example, in my case it seems **docker added a couple of matches** while it was first instaled.
+
+# Trino client
+
+Now we just have to **download** the trino client and **put it in a folder** like that:
+
+<img width="1242" height="577" alt="image" src="https://github.com/user-attachments/assets/1e14f76b-6fd1-4f22-bf3b-66bf8c8ac4ca" />
+
+I have more things but they are not necessary.
+We will now open a Powershell and go to this directory, inside it we run the next command:
+
+```sh
+java -jar trino-cli-476-executable.jar --server https://trino.local:32622 --user xavier --catalog lakehouse --insecure --password
+```
+Notice how we use *https* instead of *http* because there's TLS encryption. We then put the password which is '1234' and then we are in:
+
+<img width="1083" height="457" alt="image" src="https://github.com/user-attachments/assets/8f261478-210f-47d7-b5ae-5268dda062e9" />
+
+We can see **both catalogs, Nessie and Icerberg REST** with the respective **aliases** we gave them on the **values.yaml** for the Trino Helm Chart, **lakehouse** and **rest**-
+
+💡 Note: It's important to know that **Trino catalogs are composed of SCHEMAS, not DATABASES**, that's how Trino names the environment within which a set of tables exist. With that said, **it's just a question on nomenclature**. These are the same objects and if they are created in Spark, they will then be **visible, accessible, writable/readable, and totally functional** in Trino with the same name that Spark gave them and viceversa.
+
+That's how it looks like:
+
+<img width="1083" height="598" alt="image" src="https://github.com/user-attachments/assets/bbb94186-6d45-4c33-8884-423fdaeab335" />
+
+Don't mind the ERROR, it's just telling us that Trino wasn't capable to format the output in a nicer way, but the **current way is fully functional**.
+
+# Creating the Gold layer
+
+The creation of the gold layer will be easily performed by using the following SQL statements (I'm not sure if the these chained SQL statement here can act as a script the way they are presented here piled up one after the other, I will make a copy-paste for each statement on the Trino client) inside the client above started:
+
+```sql
+CREATE OR REPLACE VIEW rest.gold.addresses AS
+SELECT DISTINCT
+    address_id,
+    address_name,
+    city,
+    zip_code,
+    state_region,
+    country
+FROM lakehouse.data.orders_silver;
+
+CREATE OR REPLACE VIEW rest.gold.customers AS
+SELECT DISTINCT
+    customer_id,
+    customer_name,
+    email,
+    cell_phone,
+    address_id,
+    customer_genre,
+    age
+FROM lakehouse.data.orders_silver
+WHERE customer_id IS NOT NULL;
+
+CREATE OR REPLACE VIEW rest.gold.suppliers AS
+SELECT DISTINCT
+     supplier_id,
+     supplier_name,
+     supplier_email,
+     cell_phone,
+     address_id
+FROM lakehouse.data.orders_silver
+WHERE supplier_id IS NOT NULL;
+
+
+CREATE OR REPLACE VIEW rest.gold.products AS
+SELECT
+    product_id,
+    product_name,
+    product_description,
+    type_id
+FROM lakehouse.data.products_silver; -- THIS SHOULD BE THE GOOD VIEW IF THE DATA WASN'T SYNTHETIC BUT DESPCRIPTIONS ARE RANDOM AND NOT BOUND THE TYPES SO LET'S MAKE THAT INSTEAD:
+
+CREATE OR REPLACE VIEW rest.gold.products AS
+SELECT
+    product_id,
+    product_name,
+    arbitrary(product_description) AS product_description,
+    type_id
+FROM lakehouse.data.products_silver
+GROUP BY 
+    product_id,
+    product_name,
+    product_description,
+    type_id;
+
+CREATE OR REPLACE VIEW rest.gold.products_types AS
+SELECT DISTINCT
+    type_id,
+    type_name,
+    type_description
+FROM lakehouse.data.products_silver;-- THIS SHOULD BE THE GOOD VIEW IF THE DATA WASN'T SYNTHETIC BUT DESPCRIPTIONS ARE RANDOM AND NOT BOUND THE TYPES SO LET'S MAKE THAT INSTEAD:
+
+CREATE OR REPLACE VIEW rest.gold.products_types AS
+SELECT
+    type_id,
+    -- pick an arbitrary complete name (apparently, in the generation script there more than one type name for each type_id value) (first non-null one)
+    arbitrary(type_name) AS type_name,
+    -- pick an arbitrary description (first non-null one)
+    arbitrary(type_description) AS type_description
+FROM lakehouse.data.products_silver
+GROUP BY
+    type_id;
+
+CREATE OR REPLACE VIEW rest.gold.products_orders AS
+    SELECT
+    o.order_id,
+    t.product_id,
+    TRY_CAST(REPLACE(REPLACE(t.product_price, '$', ''), ',', '') AS DECIMAL(10,2)) AS product_price,
+    t.product_quantity
+FROM lakehouse.data.orders_silver AS o
+CROSS JOIN UNNEST(o.products) AS t(product_id, product_price, product_quantity); -- THIS LAST LINE IS TRINO-SPECIFIC SQL LANGUAGE, AND THERE'S NO CARTESIAN PRODUCT BETWEEN THE o TABLE AND THE UNNESTED COLUMNS LIKE IN A CONVENTIONAL CROSS JOIN, THIS LAST LINE IS EVALUATED ROW-WISE, NAMELY, THE CROSS JOIN HAPPENS ONCE FOR EVERY SINGLE ROW OF o TABLE AND THE UNNESTED FIELDS OF t SO THE REST OF THE ROWS ARE OUT OF THE SCOPE OF THE CROSS JOIN. THEREFORE, THE CARTESIAN PRODUCT TAKES PLACE BUT ONLY BETWEEN A SINGLE ROW ON THE LEFT SIDE AND ANOTHER SINGLE ROW WITH THE UNNESTED FIELD ON THE OTHER SIDE OF THE JOIN.
+```
+That would conclude the Golden layer and we can now start talking about the connection between Trino and Power BI.
 
 # Connecting Trino to Power BI
 
