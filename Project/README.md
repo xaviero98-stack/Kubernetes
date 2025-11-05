@@ -1063,29 +1063,35 @@ You can find deployment details in the official documentation. It works like any
 Here is the **values.yaml** configuration file used for the helm install command:
 
 ```yaml
+versionStoreType: MONGODB2 # We will leverage the fact that Nessie is a modern framework that also allows the use of MongoDB as it's metastore with a database in mongo called nessie to host tables metadata.
+mongodb:
+  database: nessie # It has to be created in using mongo-express first.
+  connectionString: "mongodb://mongo-0.mongo-svc.mongodb.svc.cluster.local:27017,mongo-1.mongo-svc.mongodb.svc.cluster.local:27017/?replicaSet=mongo"
+  secret: # The secret contains the mongodb credentials so that nessie can read and write in nessie database
+    name: mongodb-creds
+    username: mongodb_username
+    password: mongodb_password
 catalog:
-  iceberg:
+  iceberg: # The type of catalog is Iceberg
     defaultWarehouse: WH
     WH:
-      location: s3a://test
+      location: s3a://synthetic # S3 location for the bucket
   storage:
     s3:
       defaultOptions:
-        endpoint: http://myminio-hl.minio-tenant.svc.cluster.local:9000
-        pathStyleAccess: true
-        accessKeySecret:
-          awsAccessKeyId: DntpVaf6QiCkEvTXS5UH
-          awsSecretAccessKey: 4IFrgFNlfvS73WGq0D0OQYdEhCoKw4tuzb7Msoaz
+        endpoint: http://myminio-hl.minio-tenant.svc.cluster.local:9000 # myminio-hl service DNS address
+        pathStyleAccess: true # In this mode the endpoint doesn't contains the bucket
+        accessKeySecret: # The keys for accessing the MinIO (they can be overrriden the Spark-to-S3 confs "spark.hadoop.fs.s3a.keys" on the Spark session)
+          awsAccessKeyId: wGyHqcx43ZGp86XtqWm8
+          awsSecretAccessKey: 89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4
           name: null
-# I've noticed that this configuration is, at least, partically overwritten by the spark session initialization since the keys are not these one no more 
 ```
 
-The configuration is simpler than it might appear, because most networking complexity is handled on the **Spark** side.
-Nessie primarily listens for Spark requests and writes metadata where configured.
+The keys for **accessing MinIO** can be **overrriden** by the Spark-to-S3 confs **"spark.hadoop.fs.s3a.keys"** on the **PySpark** session.
 
-In my setup, storage is **ephemeral** inside the Nessie Pod. However, metadata storage is fully configurable — it can be set up to use a wide variety of backing databases.
+In my setup, storage is backed by **MongoDB as metastore**.
 
-💡 Note: If the Nessie Pod fails and metadata is stored ephemerally (inside the Pod), the next Nessie Pod will **not** be able to retrieve previously created tables, even if the table data persists in S3. Persistent metadata storage can be configured in the same way we’ll later see with Hive — and whilee it's true that configuration can be written within the default Helm values YAML file seen above, we can also use the Spark session configuration as we will see with nessie.
+💡 Note: If the Nessie Pod fails and metadata is stored ephemerally (inside the Pod), the next Nessie Pod will **not** be able to retrieve previously created tables, even if the table data persists in S3. That' why we have to use a metadata store as well as a data warehouse on s3. 
 
 Once again we change the service to be a Node Port and we can access the **Nessie UI**, for now there are no tables but we will be able to see them once we create them with the nessie catalog:
 
@@ -1093,7 +1099,7 @@ Once again we change the service to be a Node Port and we can access the **Nessi
 
 # Configuring Spark
 
-Now we’ll configure **Apache Spark** — not only to perform the transformations from Kafka topics, but also to act as the **main orchestration layer** between **Nessie** and **MinIO**, coordinating them to form a functional **data lakehouse** using the **Iceberg** table format.
+Now we’ll configure **Spark session** — not only to perform the transformations from Kafka topics, but also to act as the **main networking layer** between **Nessie** and **MinIO**, coordinating them to form a functional **data lakehouse** using the **Iceberg** table format.
 
 For this setup, I found it very convenient to use **Spark-on-Kubernetes**, which allows Spark to use the **Kubernetes API as its master**.
 
@@ -1106,24 +1112,21 @@ The Spark **driver** can be:
 In my case, I use a **custom Spark driver image** built with the following Dockerfile:
 
 ```Dockerfile
-FROM python:3.12-slim
+FROM python:3.10-slim
 
 # INSTALL SYSTEM DEPENDENCIES
 RUN apt-get update && apt-get install -y \
     curl \
     bash \
-    openjdk-17-jdk-headless \
+    default-jdk \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # AUTOMATICALLY DETECTS JAVA PATHS:
-RUN if [ -d "/usr/lib/jvm/java-17-openjdk-arm64" ]; then \
-        echo "export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64" >> /etc/profile.d/java_home.sh; \
-    elif [ -d "/usr/lib/jvm/java-17-openjdk-amd64" ]; then \
-        echo "export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> /etc/profile.d/java_home.sh; \
-    fi && chmod +x /etc/profile.d/java_home.sh
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+ENV PATH=$JAVA_HOME/bin:$PATH
 
 # ADD SPARK AND JUPYTER
-ENV SPARK_VERSION=4.0.0 \
+ENV SPARK_VERSION=3.5.6 \
     HADOOP_VERSION=3 \
     SPARK_HOME=/opt/spark \
     PATH=/opt/spark/bin:$PATH \
@@ -1146,22 +1149,21 @@ EXPOSE 8888
 # SETS THE WORK DIRECTORY
 WORKDIR /workspace
 
+# ADD MY SQL CONNECTOR (I downloaded and putted it on the same directory on my laptop as the one where the Dockerfile exists, this way ADD using it on the image creation)
+ADD mysql-connector-j-8.0.33.jar /opt/spark/jars/
+
 # MAINTAINS THE POD ALIVE BECAUSE IT IS NOT A CLOSED EXECUTION
 CMD ["tail", "-f", "/dev/null"]
+
 
 # WITH THAT CREATED WE SIMULTANEOUSLY CREATE THE IMAGE AND PUSH IT TO A REPOSITORY (in this case mine, xavier418/spark-driver:4.0.0 --push):
 ```
 
-This image is also available publicly on my **Docker Hub** repository.
+This image is also available publicly on my **Docker Hub** repository under the name xavier418/spark-driver:spark-3.5.6-python-3.10 
 
 To deploy it inside Kubernetes, I use the following deployment yaml manifest:
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: spark-driver
-  namespace: default
 spec:
   replicas: 1
   selector:
@@ -1177,11 +1179,18 @@ spec:
         node-role.kubernetes.io/worker: worker
       containers:
       - name: spark-driver
-        image: xavier418/spark-driver:3.5.0
+        image: xavier418/spark-driver:spark-3.5.6-python-3.10
         imagePullPolicy: Always
         ports:
         - containerPort: 8888
         - containerPort: 7077
+        env: # These env variable are used because they allow us to use an Iceberg REST catalog, further details later on but basically this catalog won't inherit the spark configs for accessing S3, instead in uses the Amazon bundle SDK 2.20 for accessing and this bundle in turn searches for the credentials inside environment variables instead of the spark session itself.  
+        - name: AWS_ACCESS_KEY_ID
+          value: "wGyHqcx43ZGp86XtqWm8"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4"
+        - name: AWS_REGION # Region makes no sense because we are using MinIO, MinIO will ignore it when the Amazon SDK sends it but the SDK needs to find it, otherwise it gives error. But we could change "us-east-1" by whatever value comes to our mind first.
+          value: "us-east-1"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -1208,20 +1217,55 @@ kind: Service
 metadata:
   name: spark-driver-jupyter
   namespace: default
-
+spec:
+  type: NodePort
+  selector:
+    app: spark-driver
+  ports:
+    - port: 8888
+      targetPort: 8888
+      nodePort: 30088
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-driver-headless
+  namespace: default
+spec:
+  clusterIP: None
+  selector:
+    app: spark-driver
+  ports:
+    - port: 7077
+      targetPort: 7077
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-ui
+  namespace: default
+spec:
+  type: NodePort
+  selector:
+    app: spark-driver
+  ports:
+    - protocol: TCP
+      port: 4040
+      targetPort: 4040
+      nodePort: 30089
 ```
 
-The image includes **JupyterLab, Spark, and Python** preinstalled. and the different services let us use owr browser to look into **Spark UI**.
+The image includes **JupyterLab, Spark, and Python** preinstalled, besides the mysql driver since we will use MySQL as metadata store for the Iceberg REST catalog. The Kubernetes Node Ports let us use our browser to look into diiferent Spark components such as **Spark UI, or Jupyter Lab**.
 
 # Accessing JupyterLab
 
-Once the Spark driver Pod is ready, I connect to it using:
+Once the Spark driver pod is deployed and ready, I connect to it using:
 
 ```bash
 kubectl exec -it <spark-driver-pod> -n default -- bash
 ```
 
-Then, I start JupyterLab with:
+Then, I start Jupyter Lab with:
 
 ```bash
 jupyter lab --ip=0.0.0.0 --port=8888 --allow-root --no-browser
@@ -1238,83 +1282,12 @@ We just have to open our browser and navigate to the 30088 port of **no matter w
 
 ![Kubernetes architecture](jupyter.png)
 
-# Deploy a relational database to host Hive metadata
+# Creating the Bronze and Silver layers
 
-**First of all, why?** Don't we have Nessie?
-
-Of course, and let me add that course was plan A but, apparently the **Power BI Spark connector** is pretty limited and won't be able to see anything else than Hive tables, so we have to make it run. As we said before, Hive will store its metadata inside this MySQL database because that will allow us hive metadata to be **concurrent**, namely hive metadata will be accessible from **PySpark Notebooks** in Jupyter Lab as well as the **Spark Thrift Serve**r that will serve the data to **Power BI**.
-
-So, to deploy the databse we do the following:
-
-We create a temporal deployment (remember we want concurrency **not persistency**):
-```bash
- kubectl run mysql -n default \
-  --image=mysql:8.0 \
-  --env="MYSQL_ROOT_PASSWORD=hivepass" \
-  --port=3306 \
-  --restart=Always
-```
-We expose it through a server to be able to talk with the database:
-```bash
-kubectl expose pod mysql -n default \
-  --port=3306 \
-  --target-port=3306 \
-  --name=mysql
-```
-
-And we create the **client** to talk to MySQL and put us inside it, now we can run SQL queries against the Database:
-kubectl run mysql-client -n default --rm -it \
-  --image=mysql:8.0 \
-  --restart=Never \
-  -- mysql -h mysql.default.svc.cluster.local -u root -phivepass
-
-We execute the folloowing SQL queries:
-```bash
-mysql> CREATE DATABASE hive_metastore;
-mysql> SHOW DATABASES;
-mysql> exit
-```
-
-Once we are out of the client pod we will run the following commands on the **controlplane node**:
-```bash
-wget https://dlcdn.apache.org/hive/hive-standalone-metastore-3.0.0/hive-standalone-metastore-3.0.0-bin.tar.gz
-
-tar -xzf hive-standalone-metastore-3.0.0-bin.tar.gz
-
-cd ./hive/apache-hive-metastore-3.0.0-bin/scripts/metastore/upgrade/mysql
-
-```
-These are simple bash commands that allow us to download **Hive**, unzip it, enter inside the files to the directory where we have the **sql script** we need to shape the newly created hive_metastore database inside MySQL, and using to **shape hive_metastore**. 
-
-- Note: This last step is **not to be made yet**, that's because if we try to shape it, we will receive an error and we won't be able to properly shape it. We have to **continue until we use try use hive for the first time in the notebook**, wait for a SQL-related error, then use the command I will say and retry the same PySpark cell inside the notebook on Jupyter, I don't know why that happens but it happens all the time. Be sure to do it that way, other wise **you will have to remove the database from MySQL and recreate it following this order** I just said.
-
-There's another thing we have to do before we can make it work for us, we will need to add to the Spark driver pod a jar that it will use to connect to MySQL, usually that can be done inside the **Spark Session command** on Jupyter Lab using **Maven packages** so that it gets downloaded and put inside the jars folder before initializaing the Spark session just as we will do manually, but it was not possible with the **MySQL Driver**.
-
-We enter inside the spark pod:
-```bash
- kubectl exec -it <pod> -n default -- bash
-```
-
-And run the following commands:
-```yaml
-cd .. # AT LEAST IN MY IMAGE YOU APPEAR IN WORKSPACE, YOU HAVE TO GET OUT OF THERE FIRST.
-
-cd. /opt/spark/jars
-
-apt-get update
-
-apt-get install -y wget
-
-wget https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/8.0.33/mysql-connector-j-8.0.33.jar
-```
-Now we have the everything set so that we can start the jupyter lab.
-
-# Creating the Bronze, Silver, and Gold Layers
-
-To create all layers and tables in Iceberg format, we use the following Jupyter Notebook:
+To create **Bronze and Silver** layers and tables in Iceberg format, we use the following **Jupyter Notebook**:
 
 ```python
-from pyspark.sql.functions import to_json, struct, col, expr, row_number, from_json, get_json_object, explode, when
+from pyspark.sql.functions import to_json, struct, col, expr, row_number, from_json, get_json_object, explode, when, regexp_replace
 from pyspark.sql.window import Window
 from pyspark.sql.types import StructType, StringType, IntegerType, MapType, StructField, LongType, TimestampType
 from pyspark.sql import SparkSession
@@ -1326,46 +1299,790 @@ from pyspark.sql import SparkSession
 spark = (
     SparkSession.builder
     .appName("JupyterSparkApp")
-    .master("k8s://https://192.168.1.150:6443")
-    .config("spark.submit.deployMode", "client")
-    .config("spark.driver.host", "spark-driver-headless.default.svc.cluster.local")
-    .config("spark.driver.port", "7077")
-    .config("spark.driver.bindAddress", "0.0.0.0")
-    .config("spark.executor.instances", "2")
-    .config("spark.kubernetes.container.image", "apache/spark:3.5.6-scala2.12-java17-python3-r-ubuntu")
-    .config("spark.kubernetes.executor.deleteOnTermination", "true")
-    .config("spark.kubernetes.executor.nodeSelector.node-role.kubernetes.io/worker", "worker")
-    .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.103.3,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1")
-    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,org.projectnessie.spark.extensions.NessieSparkSessionExtensions")
+    .master("k8s://https://192.168.1.150:6443") # The kubernetes API and the port is listens from
+    .config("spark.submit.deployMode", "client") # We run this SparkSession from this interactive notebook so no cluster mode
+    .config("spark.driver.host", "spark-driver-headless.default.svc.cluster.local") # This headless service whereby executors communicate with the driver
+    .config("spark.driver.port", "7077") # The incoming traffic goes to this headless service port
+    .config("spark.driver.bindAddress", "0.0.0.0") # Driver is listening all possible IPs
+    .config("spark.executor.instances", "2") # Number of spark executors created as pods 
+    .config("spark.kubernetes.container.image", "apache/spark:3.5.6-scala2.12-java17-python3-r-ubuntu") # Image that will be used inside the executor pods
+    .config("spark.kubernetes.executor.deleteOnTermination", "true") # Delete executor pods once the Spark session is deleted 
+    .config("spark.kubernetes.executor.nodeSelector.node-role.kubernetes.io/worker", "worker") # Node affinity, I don't want executors to be created in controlplane
+    .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2," # jars to download for Iceberg
+                                   "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.103.3," # jars to download for nessie
+                                   "org.apache.hadoop:hadoop-aws:3.3.4," # jars for S3
+                                   "com.amazonaws:aws-java-sdk-bundle:1.12.262," # More jars for S3
+                                   "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1") # Jars dowloaded for kafka
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions," # Allows us to extend Spark SQL syntax using Iceberg
+                                    "org.projectnessie.spark.extensions.NessieSparkSessionExtensions") # Allows us to extend Spark SQL syntax using Nessie
     # Nessie catalog
-    .config("spark.sql.catalog.nessie", "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.nessie.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog")
-    .config("spark.sql.catalog.nessie.uri", "http://nessie.nessie-ns.svc.cluster.local:19120/api/v1")
-    .config("spark.sql.catalog.nessie.ref", "main")
-    .config("spark.sql.catalog.nessie.authentication.type", "NONE")
-    .config("spark.sql.catalog.nessie.warehouse", "s3a://synthetic")
-    # Hive catalog
-    .config("spark.sql.catalogImplementation", "hive")
-    .config("spark.sql.warehouse.dir", "s3a://gold/tables")
-    .config("spark.hadoop.javax.jdo.option.ConnectionURL", "jdbc:mysql://mysql.default.svc.cluster.local:3306/hive_metastore?createDatabaseIfNotExist=true")
-    .config("spark.driver.extraClassPath", "/opt/spark/jars/mysql-connector-j-8.0.33.jar")
-    .config("spark.executor.extraClassPath", "/opt/spark/jars/mysql-connector-j-8.0.33.jar")
-    .config("spark.hadoop.javax.jdo.option.ConnectionUserName", "root")
-    .config("spark.hadoop.javax.jdo.option.ConnectionPassword", "hivepass")
-    .config("spark.hadoop.datanucleus.schema.autoCreateTables", "true")
+    .config("spark.sql.catalog.nessie", "org.apache.iceberg.spark.SparkCatalog") # We create the Saprk catalog names nessie
+    .config("spark.sql.catalog.nessie.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog") # The type of the nessie catalog will be NessieCatalog type
+    .config("spark.sql.catalog.nessie.uri", "http://nessie.nessie-ns.svc.cluster.local:19120/api/v1") # The nessie http endpoint is a serive created from the nessie helm chart 
+    .config("spark.sql.catalog.nessie.ref", "main") # The nessie initial branch will be "main"
+    .config("spark.sql.catalog.nessie.authentication.type", "NONE") # There's no defined authorization to access the nessie through the http endpoint 
+    .config("spark.sql.catalog.nessie.warehouse", "s3a://synthetic") # The bucket (in this case its root folder) where the nessie will write its tables data  
     # S3 configuration
-    .config("spark.hadoop.fs.s3a.access.key", "qVgFWBabQmQrSuWTJGhj")
-    .config("spark.hadoop.fs.s3a.secret.key", "l2GjPEVu22SfiqtaAU2zj3lBptEIoG1iRXGucn3o")
-    .config("spark.hadoop.fs.s3a.endpoint", "http://myminio-hl.minio-tenant.svc.cluster.local:9000")
-    .config("spark.hadoop.fs.s3a.path.style.access", "true")
+    .config("spark.hadoop.fs.s3a.access.key", "wGyHqcx43ZGp86XtqWm8") # S3 (MinIO) access key
+    .config("spark.hadoop.fs.s3a.secret.key", "89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4") # S3 (MinIO) secret key
+    .config("spark.hadoop.fs.s3a.endpoint", "http://myminio-hl.minio-tenant.svc.cluster.local:9000") # S3 (MinIO) protocol, kubernetes service and port to use let Sparl write and read from MinIO.
+    .config("spark.hadoop.fs.s3a.path.style.access", "true") # The correct way to intepret MinIO folder for Spark
     .getOrCreate()
 )
+
+spark.sql("CREATE NAMESPACE IF NOT EXISTS nessie.data")
+# NAMESPACE is Nessie's counterpart of a database in Hive/Haddop and a lot of other Catalogs.
+
+spark.sql("DROP TABLE IF EXISTS nessie.data.orders_bronze")
+# Just in case we rerun the script, we also need to eliminate all files from S3 ONLY AFTER DELETING NESSIE METADATA FROM THE TABLE
+
+# Bronze layer products
+
+# Read a continuos data stream by microbatches
+# the kafka bootstrap service and port
+# Corresponding topic
+# Iput it but will be overriden by Spark's checkpoints
+df = spark.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
+    .option("subscribe", "mongo.synthetic.products") \
+    .option("startingOffsets", "earliest") \
+    .load()
+
+# Minor data type transformations and column filtering 
+df_iceberg = df.select(
+    col("key").cast("string"),
+    col("value").cast("string"),
+    "topic",
+    "partition",
+    "offset",
+    "timestamp",
+    "timestampType"
+)
+
+spark.sql("""
+CREATE TABLE IF NOT EXISTS nessie.data.products_bronze (
+    key STRING,
+    value STRING,
+    topic STRING,
+    partition INT,
+    offset LONG,
+    timestamp TIMESTAMP,
+    timestampType INT
+)
+USING iceberg
+PARTITIONED BY (days(timestamp)) 
+""") 
+# We create a taylored custom-built table for the information coming from kafka as is according the Bronze layer philosophy of the medalion lakehouse
+# Usually the best partitioning key to use is a time based key, the more data it is generate through time, the more equally sized partitions will be generated 
+# to store it
+
+# We insert info respecting the tables format
+# Only append we rows 
+# The checkpoint saves the last (and most likely all previous) record Spark read from the stream so it doesn't duplicate info twice on the target
+# we save info in the nessie tabl above created
+query = df_iceberg.writeStream \
+    .format("iceberg") \
+    .outputMode("append") \
+    .option("checkpointLocation", "s3a://synthetic/checkpoints/products_bronze") \
+    .toTable("nessie.data.products_bronze")
+query.awaitTermination()
+# When the process starts, we can stop the cell execution but the underlying Spark stream will still be active monitoring the Debezium topic
+
+# Bronze layer orders
+# This process does exactly the same as what we have seen above only now it's time for the orders to be processed
+df = spark.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
+    .option("subscribe", "mongo.synthetic.orders") \
+    .option("startingOffsets", "earliest") \
+    .load()
+
+df_iceberg = df.select(
+    col("key").cast("string"),
+    col("value").cast("string"),
+    "topic",
+    "partition",
+    "offset",
+    "timestamp",
+    "timestampType"
+)
+
+spark.sql("""
+CREATE TABLE IF NOT EXISTS nessie.data.orders_bronze (
+    key STRING,
+    value STRING,
+    topic STRING,
+    partition INT,
+    offset LONG,
+    timestamp TIMESTAMP,
+    timestampType INT
+)
+USING iceberg
+PARTITIONED BY (days(timestamp))
+""")
+
+query = df_iceberg.writeStream \
+    .format("iceberg") \
+    .outputMode("append") \
+    .option("checkpointLocation", "s3a://synthetic/checkpoints/orders_bronze") \
+    .toTable("nessie.data.orders_bronze")
+query.awaitTermination()
+
+# Just verifying everything went as expected
+query = spark.sql("""
+       SELECT * FROM nessie.data.orders_bronze
+    """)
+query.show()
+
+# Same as above
+query = spark.sql("""
+   SELECT * FROM nessie.data.products_bronze
+""")
+query.show()
+
+# In case we rerun the script, we also need to eliminate all files from S3
+spark.sql("DROP TABLE IF EXISTS nessie.data.orders_silver")
+
+# Silver layer
+spark.sql("""
+CREATE TABLE IF NOT EXISTS nessie.data.orders_silver (
+  oid STRING,
+  order_id STRING,
+  order_date TIMESTAMP,
+  is_rebate BOOLEAN,
+  products ARRAY<STRUCT<
+    product_id: STRING,
+    product_price: STRING,
+    product_quantity: STRING
+>>,
+  supplier_id STRING,
+  supplier_name STRING,
+  supplier_email STRING,
+  customer_id STRING,
+  customer_name STRING,
+  email STRING,
+  customer_genre STRING,
+  age INTEGER,
+  cell_phone STRING,
+  address_id STRING,
+  address_name STRING,
+  city STRING,
+  zip_code STRING,
+  state_region STRING,
+  country STRING,
+  op STRING,
+  ts_ms BIGINT
+  
+)
+USING iceberg
+PARTITIONED BY (days(order_date))
+TBLPROPERTIES (
+  'format-version' = '2',
+  'read.change.data.capture' = 'true'
+)
+""")
+
+# The previous partition criteria holds true for this case too, in this table we are going to put all information coming from the orders
+# in a single broad table with columns for all information.
+
+
+df_bronze = spark.readStream.format("iceberg").table("nessie.data.orders_bronze") # We start reading new rows from the bronze table in microbatches 
+"""
+Clarification:
+
+With MapType labels are assigned dinamically that's why spark finds "before" or "after" without specifying it inside the payload_schema:
+- Faster when we see JSONs with few nested levels and a lot of fields in each level and no ArrayTypes
+
+StructType, nevertheless,  is insesible to the order in which StructFields appear on the StructType, It will search for the label we put 
+at the beginning like "id" on StructField("id", StructType([StructField("oid", StringType)]).
+- Good for any kind of JSON but slower to define JSON schemas with
+"""
+payload_schema = StructType().add("payload", MapType(StringType(), StringType()))
+oid_schema = StructType([StructField("$oid", StringType())])
+
+df_parsed = df_bronze.selectExpr("CAST(value AS STRING) as json_str", "CAST(key AS STRING) as json_key") \
+    .withColumn("value", from_json(col("json_str"), payload_schema)) \
+    .withColumn("key", from_json(col("json_key"), payload_schema)) \
+    .withColumn("key_id", from_json(col("key.payload")["id"], oid_schema)) \
+    .select("value", "key_id")
+
+# Notice how once we have the JSON schema defined using the from_json function on the columns that contain JSONs Spark becomes aware of the structure
+# and can draw anything we want from the JSON regardless of the nesting level:
+df_parsed_cols = df_parsed.select(
+    col("key_id.$oid").alias("oid"),
+    col("value.payload")["before"].alias("before"),
+    col("value.payload")["after"].alias("after"),
+    col("value.payload")["source"].alias("source"),
+    col("value.payload")["op"].alias("op"),
+    col("value.payload")["ts_ms"].alias("ts_ms"),
+    col("value.payload")["transaction"].alias("transaction"))
+
+orders_schema = StructType([
+    StructField("_id", StructType([StructField("$oid", StringType())])),
+    StructField("order_id", StringType()),
+    StructField("order_date",TimestampType()),
+    StructField("is_rebate", BooleanType()),
+    StructField("comercial_partner", StructType([StructField("supplier_id", StringType(), nullable=True), 
+                                                 StructField("supplier_name", StringType(), nullable=True),
+                                                 StructField("supplier_email", StringType(), nullable=True),
+                                                 StructField("customer_id", StringType(), nullable=True),
+                                                 StructField("customer_name", StringType(), nullable=True),
+                                                 StructField("email", StringType(), nullable=True),
+                                                 StructField("customer_genre", StringType(), nullable=True),
+                                                 StructField("age", IntegerType(), nullable=True),
+                                                 StructField("cell_phone", StringType()),
+                                                 StructField("address", StructType([StructField("address_id", StringType()),
+                                                                                    StructField("address_name", StringType()),
+                                                                                    StructField("city", StringType()),
+                                                                                    StructField("zip_code", StringType()),
+                                                                                    StructField("state_region", StringType()),
+                                                                                    StructField("country", StringType())
+                                                             ]))])),
+    StructField("products", ArrayType(StructType([StructField("product_id", StringType()),
+                                                  StructField("product_price", StringType()),
+                                                  StructField("product_quantity", StringType())
+                                                  ])))
+])
+
+df_parsed_nested = df_parsed_cols.withColumn("data_map", from_json(col("after"), orders_schema))
+
+df_BIGINT = df_parsed_nested.withColumn("ts_ms", col("ts_ms").cast("bigint"))
+
+df_map = df_BIGINT.select(
+    col("oid"),
+    col("data_map")["order_id"].alias("order_id"),
+    col("data_map")["order_date"].alias("order_date"),
+    col("data_map")["is_rebate"].alias("is_rebate"),
+    col("data_map")["products"].alias("products"),
+    col("data_map")["comercial_partner"]["supplier_id"].alias("supplier_id"),
+    col("data_map")["comercial_partner"]["supplier_name"].alias("supplier_name"),
+    col("data_map")["comercial_partner"]["supplier_email"].alias("supplier_email"),
+    col("data_map")["comercial_partner"]["customer_id"].alias("customer_id"),
+    col("data_map")["comercial_partner"]["customer_name"].alias("customer_name"),
+    col("data_map")["comercial_partner"]["email"].alias("email"),
+    col("data_map")["comercial_partner"]["customer_genre"].alias("customer_genre"),
+    col("data_map")["comercial_partner"]["age"].alias("age"),
+    col("data_map")["comercial_partner"]["cell_phone"].alias("cell_phone"),
+    col("data_map")["comercial_partner"]["address"]["address_id"].alias("address_id"),
+    col("data_map")["comercial_partner"]["address"]["address_name"].alias("address_name"),
+    col("data_map")["comercial_partner"]["address"]["city"].alias("city"),
+    col("data_map")["comercial_partner"]["address"]["zip_code"].alias("zip_code"),
+    col("data_map")["comercial_partner"]["address"]["state_region"].alias("state_region"),
+    col("data_map")["comercial_partner"]["address"]["country"].alias("country"),
+    col("op").alias("op"),
+    col("ts_ms"), 
+)
+"""
+NOTICE HOW WE COULD ADD THIS LINE AT THE SPARK TRANSFORMATION ABOVE TO COMPLETELY NORMALIZE THE DATAFRAME:
+
+explode(col("data_map")["products"]).alias("products") These transformation wewdon't use it
+
+AND THEN ADD A NEW STEP WHERE WE CAN EXTRACT THE PRODUCT, NAME AND QUANTITY IN DIFFERENT COLUMNS: 
+ df_map = df_ex.select(
+    "*",
+   col("products")["product_id"].alias("product_id"),
+   col("products")["product_price"].alias("product_name"),
+   col("products")["product_quantity"].alias("quantity")
+ )
+HOWEVER, WE WON'T EXPLODE THE COLUMNS BECAUSE THAT WAY WE PRESERVE THE CORRESPODENCE BETWEEN A ROWS AND ORDERS, THAT WILL HELP US LATER ON 
+WITH GOLDEN TABLES MAKING THE OVERALL PROCESS OF COMING UP WITH SEPARATE GOLDEN TABLES EASIER FOR US. BESIDES, IN THE LAST PATH TO GOLD TABLES
+WE CAN MAKE USE OF THIS TRANSFORMATION ABOVE TO EXPLODE THE FORM A NEW products_orders TABLE.
+"""
+def merge_into_orders_silver(microBatchOutputDF, batchId): 
+    # This function will be put into forEachBatch what will allows us to treat each microbatch as a regular batch job and we therefore apply 
+    # batch functions not allowed in stremas without losing the underlyinf streaming structure 
+
+    window = Window.partitionBy("oid").orderBy(col("ts_ms").desc())
+
+    df_final_batch = microBatchOutputDF.withColumn("rn", row_number().over(window)) \
+                      .filter(col("rn") == 1) \
+                      .drop("rn")
+    
+    df_final_batch.createOrReplaceTempView("batch_updates")
+
+    microBatchOutputDF.sparkSession.sql("""
+        MERGE INTO nessie.data.orders_silver AS target
+        USING batch_updates AS source
+        ON target.oid = source.oid
+        WHEN MATCHED AND source.op = 'd' AND source.ts_ms > target.ts_ms THEN DELETE
+        WHEN MATCHED AND source.op IN ('u', 'r', 'i') AND source.ts_ms > target.ts_ms THEN UPDATE SET *
+        WHEN NOT MATCHED AND source.op IN ('c', 'r', 'i') THEN INSERT *
+    """)
+""" 
+ Hopefully, thanks to the clarity of the MERGE INTO syntax it becomes really clear what we are doing with each micro-batch, what this does is
+ Recreating the current state of the orders document in MongoDB in the form of a table. For every MongoDB change, an equivalent change takes place 
+ in this table. 
+ Only take into account that if the connector gets disconnected from MongoDB and in that time some data gets deleted, the corresponding rows
+ won't be erased from this table, but this can be easily tackled by doing periodic inner joins between this table and a Spark batch job that 
+ also reconstructs the state of the table. Nevertheless, it would imply a failure in the fault tolerance and high availability properties of the
+ data pipeline but we could easily make more Kafka Connect pods to achieve HA. 
+"""
+
+query = df_map.writeStream \
+    .foreachBatch(merge_into_orders_silver) \
+    .option("checkpointLocation", "s3a://synthetic/checkpoints/orders_silver") \
+    .outputMode("update") \
+    .start()
+
+spark.sql("SELECT * FROM nessie.data.orders_silver").show() # Verify everything went okay
+
+spark.sql("DROP TABLE IF EXISTS nessie.data.products_silver").show() # In case we rerun the script, we also need to eliminate all files from S3
+
+# Silver layer
+spark.sql("""
+CREATE TABLE IF NOT EXISTS nessie.data.products_silver (
+  oid STRING,
+  product_id STRING,
+  product_name STRING,
+  product_price STRING,
+  product_description STRING,
+  type_id STRING,
+  type_name STRING,
+  type_description STRING,
+  op STRING,
+  ts_ms BIGINT
+)
+USING iceberg
+PARTITIONED BY (bucket(16, product_id)) -- 16 buckets
+TBLPROPERTIES (
+  'format-version' = '2',
+  'read.change.data.capture' = 'true'
+)
+""")
+# Here expect a fixed or almost constant quantity of products, so the partitioning can be a fixed bucketing using product_id as partition key
+
+df_bronze = spark.readStream.format("iceberg").table("nessie.data.products_bronze")
+
+payload_schema = StructType().add("payload", MapType(StringType(), StringType()))
+oid_schema = StructType([StructField("$oid", StringType())])
+
+
+df_parsed = df_bronze.selectExpr("CAST(value AS STRING) as json_str", "CAST(key AS STRING) as json_key") \
+    .withColumn("value", from_json(col("json_str"), payload_schema)) \
+    .withColumn("key", from_json(col("json_key"), payload_schema)) \
+    .withColumn("key_id", from_json(col("key.payload")["id"], oid_schema)) \
+    .select("value", "key_id")
+
+df_parsed_cols = df_parsed.select(
+    col("key_id.$oid").alias("oid"),
+    col("value.payload")["before"].alias("before"),
+    col("value.payload")["after"].alias("after"),
+    col("value.payload")["source"].alias("source"),
+    col("value.payload")["op"].alias("op"),
+    col("value.payload")["ts_ms"].alias("ts_ms"),
+    col("value.payload")["transaction"].alias("transaction"))
+
+product_type_schema = StructType([
+    StructField("type_id", StringType()),
+    StructField("type_name", StringType()),
+    StructField("type_description", StringType())
+])
+
+product_schema = StructType([
+    StructField("_id", StructType([StructField("$oid", StringType())])),
+    StructField("product_id", StringType()),
+    StructField("product_name", StringType()),
+    StructField("product_price", StringType()),
+    StructField("product_description", StringType()),
+    StructField("product_type", product_type_schema)
+])
+    
+df_if = df_parsed_cols.withColumn("data_map", from_json(col("after"), product_schema))
+
+df_BIGINT = df_if.withColumn("ts_ms", col("ts_ms").cast("bigint"))
+
+df_final = df_BIGINT.select(
+        col("oid"),
+        col("data_map")["product_id"].alias("product_id"),
+        col("data_map")["product_name"].alias("product_name"),
+        col("data_map")["product_price"].alias("product_price"),
+        col("data_map")["product_description"].alias("product_description"),
+        col("data_map")["product_type"]["type_id"].alias("type_id"),
+        col("data_map")["product_type"]["type_name"].alias("type_name"),
+        col("data_map")["product_type"]["type_description"].alias("type_description"),
+        col("op").alias("op"),
+        col("ts_ms")
+    )
+
+# YOU NEED A FUNCTION THAT LOOKS AT ts_ms AND TAKES THE MOST RECENT RSTATE OF EACH PRODUCT DEPENDING ON WHETHER IT IS AN UPDATE A DELETE OR AN INSERT. 
+# WE WILL USE BTACH SYNTAX AND FUNCTIONALITIES FOR EACH STREAMING BATCH TO HEKP US LIKE WE CAN SEE ON THE FOLLOWING CODE
+def merge_into_products_silver(microBatchOutputDF, batchId):
+
+    window = Window.partitionBy("oid").orderBy(col("ts_ms").desc())
+
+    df_final_batch = microBatchOutputDF.withColumn("rn", row_number().over(window)) \
+                      .filter(col("rn") == 1) \
+                      .drop("rn")
+    
+    df_final_batch.createOrReplaceTempView("batch_updates")
+
+    microBatchOutputDF.sparkSession.sql("""
+        MERGE INTO nessie.data.products_silver AS target
+        USING batch_updates AS source
+        ON target.oid = source.oid
+        WHEN MATCHED AND source.op = 'd' AND source.ts_ms > target.ts_ms THEN DELETE
+        WHEN MATCHED AND source.op IN ('u', 'r', 'i') AND source.ts_ms > target.ts_ms THEN UPDATE SET *
+        WHEN NOT MATCHED AND source.op IN ('c', 'r', 'i') THEN INSERT *
+    """)
+    
+#    microBatchOutputDF.sparkSession.sql("""
+#        DELETE FROM nessie.products_silver AS target
+#        WHERE target.product_id NOT IN (SELECT product_id FROM batch_updates) 
+#        AND target.oid NOT IN (SELECT oid FROM batch_updates)
+#    """)
+
+# THIS LAST ADDITION COULD ALSO REMOVE THE NEED FOR PERIODIC INNER JOIN BATCH JOBS BUT ONLY BY DOING EXACTLY THAT WITH EVERY SINGLE MICROBATCH, 
+# THAT'S EXTREMELY INNEFICIENT, EVERY BATCH WOULD REQUIRE SPARK TO SCAN ALL THE products_silver TABLE TO COMPARE EVERY POSSIBLE VALUE
+# OF oid AND product_id, WITH THE FEW VALUES OF oid AND product_id INSIDE EACH MICROBATCH. THE ALTERNATIVE WOULD COMPARE ONE SINGLE TIME 
+# ALL POSSIBLE DELETED RECORDS.
+
+query = df_final.writeStream \
+    .foreachBatch(merge_into_products_silver) \
+    .option("checkpointLocation", "s3a://synthetic/checkpoints/products_silver") \
+    .outputMode("update") \
+    .start()
+query.awaitTermination()
+
+query = spark.sql("""
+       SELECT * FROM nessie.data.products_silver
+    """)
+query.show(30) # Verifycation checkpoint
+
+# THESE THREE LINES BELOW ARE USED TO CLOSE THE OPENED STREAMS ABOVE WHEN WE WHAT TO EITHER STOP THE SPARK STREAMS OR WE WANT TO STOP THE SPARK SESSION ALTOGETHER.
+for q in spark.streams.active:
+    q.stop()
+
+spark.streams.active
+
+spark.stop()
+```
+You can see the corresponding .ipynb script with it's outputs in this notebook:
+
+![Kubernetes architecture](Bronze+Silver.ipynb)
+
+# Gold layer 
+
+Now, it is the time to explain how I have approached the **Gold layer**.
+Up until now we have an arquitecture with two tables, orders_silver and products_silver, that update themselves in **near real time** with microbatches using **Spark Structured Streaming** our goal for the gold layer is simply to **model this data** in these two tables and **shape it** according the **star schema**, the most usual structure **Power BI semantic models** have. Ideally, we also want to **avoid data duplication and reprocessing** of this data one more time to save costs in production while upgrading it from the silver to the gold layer, which would involve yet another Spark stream transporting microbatches from silver Iceberg tables to gold Iceberg tables, let alone the fact that we cannot make CDC changes from these tables using Spark streams, (at least by the time I'm writing that, Iceberg supports creating tables with change awareness by setting a TBL property named capture.changes = 'true' or something alike, but **only works with Spark batches, not with Spark Structured Streaming**). 
+
+Well, there's a simple and elegant solution that accomplishes everything. **Iceberg Views**:
+
+- They won't duplicate data.
+
+- They have the flexibility required to shape data in according to the **star schema**.
+
+- These transformations, as we will see are primarily filters on a subset of columns and/or rows, and if we recall the fact that the **silver tables are partitioned (row-level partition)** and that they store data in **parquet files (column-level partitiong)** means that underlying queries will be very efficient in terms of processing and computing resources.
+
+This last part of the implementation will require the following additional technologies:
+
+- Iceberg REST catalog
+- MySQL
+- Trino
+- Traefik
+
+Let's explain what they do, Iceberg REST is a layer over another Icerberg catalog that exposes the API and let's us communicate with the underlying catalog using the Iceberg API, in my case, I will use a JDBC catalog under the hood, that's why we will use MySQL it will be the database metastore. 
+Trino is a very popular distributed SQL engine and its purpose consists of being able to run SQL queries over known data lakehouses catalogs such as Nessie or Iceberg REST. It also comes with the hability to create views and tables upon the existing data it sees and store them on the same catalogs it is looking at. 
+
+I think its a good idea to clarify how it is different from Spark because, some of their capabilities certainly overlap to some extent. The focus of Spark lies on **data transformation** it can transform data with using **SQL statements thanks to spark.sql** but we can also use USF's and overall **underlying python environment to use the programatic capabilities** of such a powerful language like loops to iterate while transforming, it can also **transform semistructured data** as we saw like JSONs. On the other hand, Trino is purely SQL-based, and within the scope of what SQL allows, it can transform or create data or views, but it's main purpose is to **unify different data sources under a single SQL-ready environment** and give the **capabilities of a regular relational database** like users, concurrency, TLS encryption, and more.
+
+**Traefik** is just another service like **nginx** that allows us to use **TLS encryption** for in and outbound traffic for the Kubernetes cluster, it opens us a Load Balancer that will redirect traffic using an Ingress whereby we will access the service from outside the kubernetes cluster. 
+
+
+# Deploy a relational database to host Iceberg REST metadata
+
+**First of all, why Iceberg REST?** Don't we have Nessie?
+
+Of course, and let me add that course was plan A, but apparently the **Trino's views are not supported on Nessie** even though tables are so we will use the Iceberg REST catalog because **Trino does support views for this REST catalog**. As we said before, **Iceberg REST will store its metadata inside this MySQL database.**
+
+Before we deploy Iceberg we need to deploy MySQL database because Iceberg REST will look for it as soon as it is deployed and will fail if it cannot connect to it.
+
+So, to deploy the databse we do the following 
+💡 Note: The storage ended up being **ephemeral** because this catalog will only store views, not tables, of course Iceberg REST views metadata comes in the form of data inside MySQL but **views are stateless** objects, and I already have a script to generate them in Trino:
+
+```yaml
+# MySQL Secret
+# TO CONNECT ONCE DEPLOYED: kubectl run mysql-client --rm -it --image=mysql:8.1 -- mysql -h mysql -u iceberg -picebergpass iceberg_catalog
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: default
+type: Opaque
+stringData:
+  MYSQL_ROOT_PASSWORD: "rootpassword"
+  MYSQL_USER: "iceberg"
+  MYSQL_PASSWORD: "icebergpass"
+  MYSQL_DATABASE: "iceberg_catalog"
+
+---
+# MySQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.1
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_ROOT_PASSWORD
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_USER
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_PASSWORD
+        - name: MYSQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: MYSQL_DATABASE
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mysql-data
+        emptyDir: {}  # ephemeral storage
+
+---
+# MySQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: default
+spec:
+  selector:
+    app: mysql
+  ports:
+  - protocol: TCP
+    port: 3306
+    targetPort: 3306
+  type: ClusterIP
 ```
 
-When the notebook cells are executed, the Spark streams begin running immediately.
-Even if you later stop the Python kernel, the underlying Spark streams will continue accumulating as you run more cells — this is expected behavior.
+You will everything went fine when you see this deployment with kubectl:
 
-# Connecting Spark to Power BI
+<img width="891" height="268" alt="image" src="https://github.com/user-attachments/assets/eb1e9e3d-82fd-4053-ad34-c30659bc07ed" />
+
+If you also want to make sure it works you can login using, if you can enter, everything was properly set up:
+
+```bash
+ kubectl run mysql-client --rm -it --image=mysql:8.1 -- mysql -h mysql -u iceberg -picebergpass iceberg_catalog
+```
+
+
+# Icerberg REST Catalog
+
+Now we can deploy Iceberg REST catalog, for that we will use the following yaml:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iceberg-rest
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iceberg-rest
+  template:
+    metadata:
+      labels:
+        app: iceberg-rest
+    spec:
+      containers:
+      - name: iceberg-rest
+        image: xavier418/iceberg-rest-fixture:2.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8181
+        env:
+        # MySQL config
+        - name: CATALOG_URI
+          value: "jdbc:mysql://mysql:3306/iceberg_catalog"
+        - name: CATALOG_JDBC_USER
+          value: "iceberg"
+        - name: CATALOG_JDBC_PASSWORD
+          value: "icebergpass"
+        - name: CATALOG_JDBC_STRICT_MODE
+          value: "true"
+        - name: REST_PORT
+          value: "8181"
+        # S3 (MinIO) config
+        - name: CATALOG_IO__IMPL
+          value: "org.apache.iceberg.aws.s3.S3FileIO"
+        - name: CATALOG_S3_ENDPOINT
+          value: "http://myminio-hl.minio-tenant.svc.cluster.local:9000"
+        - name: AWS_ACCESS_KEY_ID
+          value: "wGyHqcx43ZGp86XtqWm8"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4"
+        - name: CATALOG_S3_PATH_STYLE_ACCESS
+          value: "true"
+        - name: CATALOG_WAREHOUSE
+          value: "s3a://synthetic"
+        - name: AWS_REGION
+          value: "us-east-1"
+        - name: CATALOG_S3_path__style__access
+          value: "true"
+---
+# Iceberg REST Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-rest
+  namespace: default
+spec:
+  selector:
+    app: iceberg-rest
+  ports:
+  - protocol: TCP
+    port: 8181
+    targetPort: 8181
+  type: ClusterIP
+```
+As you can see, there's a custom image, this image is the regular iceberg rest image we can find in the official apache/iceberg repo on docker hub, the only difference is that I added the mysql connector to that iceberg can communicate with MySQL deployed on the previous yaml.
+
+The Dockerfile is the following one:
+
+```Dockerfile
+FROM apache/iceberg-rest-fixture:latest
+
+# Copy MySQL JDBC driver, (needless to say the jar was in the same directory as this Dockerfile, as said previously, I think I used ADD instead of COPY, both should work fine)
+COPY mysql-connector-j-8.1.0.jar /usr/lib/iceberg-rest/
+
+# Run Iceberg REST with the driver in classpath
+CMD ["java", "-cp", "iceberg-rest-adapter.jar:mysql-connector-j-8.1.0.jar", "org.apache.iceberg.rest.RESTCatalogServer"]
+```
+
+You have probably noticed how we **didn't even touch the Iceberg REST catalog** in PySpark code on the **Bronze and Silver layer section**, we didn't even configured the Spark Session to access it. It is because we will only access it through Trino, it is also possible to access **REST catalog with Spark** using this Spark session conf:
+
+```python
+from pyspark.sql.functions import to_json, struct, col, expr, row_number, from_json, get_json_object, explode, when, regexp_replace, current_timestamp
+from pyspark.sql.window import Window
+from pyspark.sql.types import StructType, StringType, IntegerType, MapType, StructField, LongType, TimestampType
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import to_json, struct, col, expr, row_number, from_json, get_json_object, explode, when
+from pyspark.sql.window import Window
+from pyspark.sql.types import StructType, StringType, IntegerType, MapType, StructField, LongType, TimestampType, BooleanType, ArrayType
+from pyspark.sql import SparkSession, Row
+
+spark = (
+    SparkSession.builder
+    .appName("JupyterSparkApp")
+    .master("k8s://https://192.168.1.150:6443") # The kubernetes API and the port is listens from
+    .config("spark.submit.deployMode", "client") # We run this SparkSession from this interactive notebook so no cluster mode
+    .config("spark.driver.host", "spark-driver-headless.default.svc.cluster.local") # This headless service whereby executors communicate with the driver
+    .config("spark.driver.port", "7077") # The incoming traffic goes to this headless service port
+    .config("spark.driver.bindAddress", "0.0.0.0") # Driver is listening all possible IPs
+    .config("spark.executor.instances", "2") # Number of spark executors created as pods 
+    .config("spark.kubernetes.container.image", "apache/spark:3.5.6-scala2.12-java17-python3-r-ubuntu") # Image that will be used inside the executor pods
+    .config("spark.kubernetes.executor.deleteOnTermination", "true") # Delete executor pods once the Spark session is deleted 
+    .config("spark.kubernetes.executor.nodeSelector.node-role.kubernetes.io/worker", "worker") # Node affinity, I don't want executors to be created in controlplane
+    .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2," # jars to download for Iceberg
+                                   "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.103.3," # jars to download for nessie
+                                   "org.apache.hadoop:hadoop-aws:3.3.4," # jars for S3
+                                   "software.amazon.awssdk:bundle:2.20.147," # More jars for S3
+                                   "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1") # Jars dowloaded for kafka
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions," # Allows us to extend Spark SQL syntax using Iceberg
+                                    "org.projectnessie.spark.extensions.NessieSparkSessionExtensions") # Allows us to extend Spark SQL syntax using Nessie
+    # Executor environment variables for AWS SDK
+    .config("spark.executorEnv.AWS_REGION", "us-east-1")
+    .config("spark.executorEnv.AWS_ACCESS_KEY_ID", "wGyHqcx43ZGp86XtqWm8")
+    .config("spark.executorEnv.AWS_SECRET_ACCESS_KEY", "89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4")
+    # REST catalog
+    .config("spark.sql.catalog.rest", "org.apache.iceberg.spark.SparkCatalog")
+    .config("spark.sql.catalog.rest.catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
+    .config("spark.sql.catalog.rest.uri", "http://iceberg-rest.default.svc.cluster.local:8181")
+    .config("spark.sql.catalog.rest.warehouse", "s3://synthetic")
+    .config("spark.sql.catalog.rest.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+    .config("spark.sql.catalog.rest.s3.access-key", "wGyHqcx43ZGp86XtqWm8")
+    .config("spark.sql.catalog.rest.s3.secret-key", "89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4")
+    .config("spark.sql.catalog.rest.s3.endpoint", "http://myminio-hl.minio-tenant.svc.cluster.local:9000")
+    .config("spark.sql.catalog.rest.s3.path-style-access", "true")
+    # S3 configuration
+    .config("spark.hadoop.fs.s3a.region", "us-east-1")
+    .config("spark.hadoop.fs.s3a.access.key", "wGyHqcx43ZGp86XtqWm8") # S3 (MinIO) access key
+    .config("spark.hadoop.fs.s3a.secret.key", "89DlA5N6PfNE8o0XptU9zby6niweY2mXZkNbFsl4") # S3 (MinIO) secret key
+    .config("spark.hadoop.fs.s3a.endpoint", "http://myminio-hl.minio-tenant.svc.cluster.local:9000") # S3 (MinIO) protocol, kubernetes service and port to use let Sparl write and read from MinIO.
+    .config("spark.hadoop.fs.s3a.path.style.access", "true") # The correct way to intepret MinIO folder for Spark
+    .getOrCreate()
+)
+# You can try command like:
+spark.sql("CREATE DATABASE IF NOT EXISTS rest.gold")
+
+spark.sql("SHOW DATABASES IN rest").show()
+```
+
+Take into account that objects like **DATABASES**, called **SCHEMAS in Trino**, as well as **TABLES** created in Spark will be **perfectly compatible and visible** by Trino and viceversa, **but that is not the case with VIEWS.**
+
+# Traefik 
+
+To create we will use the official Helm Chart like that, running this command on the controlplane:
+
+```bash
+helm install traefik traefik/traefik -n traefik --create-namespace
+```
+For our use case we don't need to change any of the default values, this will create the folowing:
+
+
+<img width="873" height="238" alt="image" src="https://github.com/user-attachments/assets/eb53f829-e202-4171-94db-62239dd58d29" />
+
+# Trino
+
+Now that we have Traefik we can deploy Trino using TLS and Password, it is not really necessary but I thought it was a good exercise and allowed me to familiarize with Kubernetes Load Balancers and TLS encryption. 
+So for TLS encryption we first thing we will use is the following command:
+
+```bash
+openssl req -x509 -nodes -days 365 \
+  -newkey rsa:2048 \
+  -keyout trino.key \
+  -out trino.crt \
+  -subj "/CN=trino.local/O=HomeLab"
+```
+
+This will generate the certificate **trino.crt** and the key **trino.key**, now we will use them to formulate a **Kubernetes secret** like that:
+
+```bash
+kubectl create secret tls trino-tls \
+  --cert=trino.crt \
+  --key=trino-key \
+  -n trino
+```
+
+Once you have it, you will see the secret there (the rest will not be visible yet) using:
+
+```bash
+kubectl get secret -n trino
+```
+<img width="652" height="118" alt="image" src="https://github.com/user-attachments/assets/b839131b-556a-4f8d-906d-eac766324575" />
+
+
+
+# Connecting Trino to Power BI
 
 At this point, everything is ready to start the Spark Thrift Server and connect it to Power BI.
 
