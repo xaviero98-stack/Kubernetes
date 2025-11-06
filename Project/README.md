@@ -1,4 +1,4 @@
-# A Turning MongoDB Ops Data into Near Real-Time Power BI Insights on Kubernetes
+# Turning MongoDB Ops Data into Near Real-Time Power BI Insights on Kubernetes
 
 The scope of this project is to learn how to integrate and use different Big Data technologies to create an **end-to-end, production-like data pipeline** inside my **Kubernetes homelab.**
 
