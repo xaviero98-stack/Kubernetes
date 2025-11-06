@@ -2293,6 +2293,17 @@ FROM lakehouse.data.products_silver
 GROUP BY
     type_id;
 
+CREATE OR REPLACE VIEW rest.gold.orders AS
+    SELECT
+    order_id,
+    order_date,
+    is_rebate,
+    CASE
+        WHEN supplier_id IS NULL THEN customer_id
+        ELSE supplier_id
+    END AS comercial_partner  
+FROM lakehouse.data.orders_silver;
+
 CREATE OR REPLACE VIEW rest.gold.products_orders AS
     SELECT
     o.order_id,
@@ -2300,36 +2311,32 @@ CREATE OR REPLACE VIEW rest.gold.products_orders AS
     TRY_CAST(REPLACE(REPLACE(t.product_price, '$', ''), ',', '') AS DECIMAL(10,2)) AS product_price,
     t.product_quantity
 FROM lakehouse.data.orders_silver AS o
-CROSS JOIN UNNEST(o.products) AS t(product_id, product_price, product_quantity); -- THIS LAST LINE IS TRINO-SPECIFIC SQL LANGUAGE, AND THERE'S NO CARTESIAN PRODUCT BETWEEN THE o TABLE AND THE UNNESTED COLUMNS LIKE IN A CONVENTIONAL CROSS JOIN, THIS LAST LINE IS EVALUATED ROW-WISE, NAMELY, THE CROSS JOIN HAPPENS ONCE FOR EVERY SINGLE ROW OF o TABLE AND THE UNNESTED FIELDS OF t SO THE REST OF THE ROWS ARE OUT OF THE SCOPE OF THE CROSS JOIN. THEREFORE, THE CARTESIAN PRODUCT TAKES PLACE BUT ONLY BETWEEN A SINGLE ROW ON THE LEFT SIDE AND ANOTHER SINGLE ROW WITH THE UNNESTED FIELD ON THE OTHER SIDE OF THE JOIN.
+CROSS JOIN UNNEST(o.products) AS t(product_id, product_price, product_quantity); -- THIS LAST LINE IS TRINO-SPECIFIC SQL LANGUAGE, AND THERE'S NO CARTESIAN PRODUCT BETWEEN THE o TABLE AND THE UNNESTED COLUMNS LIKE IN A CONVENTIONAL CROSS JOIN, THIS LAST LINE IS EVALUATED ROW-WISE, NAMELY, THE CROSS JOIN HAPPENS ONCE FOR EVERY SINGLE ROW OF o TABLE AND THE UNNESTED FIELDS OF t PRESENT ON THE o TABLE'S ROW, SO THE REST OF THE ROWS ARE OUT OF THE SCOPE OF THE CROSS JOIN. THEREFORE, THE CARTESIAN PRODUCT TAKES PLACE BUT ONLY BETWEEN A SINGLE ROW ON THE LEFT SIDE AND ANOTHER SINGLE ROW WITH THE UNNESTED FIELDS OF THIS SAME ROW ON THE OTHER SIDE OF THE JOIN WITH SIMPLY RETURNS A SIGLE COMBINATION OF THESE TWO ROWS MATCHED. 
 ```
 That would conclude the Golden layer and we can now start talking about the connection between Trino and Power BI.
 
 # Connecting Trino to Power BI
 
-At this point, everything is ready to start the Spark Thrift Server and connect it to Power BI.
+There are several specific ways to connect Trino to Power BI but all of them can fall into one of these two categories, either we use a **custom connector** or we use an **ODBC/JDBC driver** for Trino and then use it to create a **DSN (Data Source Names)**, then we can use it inside the generic out-of-the-box ODBC connector Power BI comes with. We will use the **custom connector** approach, it is simpler and more direct.  
 
-We just need to expose a NodePort to provide external access from Power BI Desktop (running on my laptop outside the Kubernetes cluster).
+The specific custom connector we will use us the one from https://github.com/CreativeDataEU/PowerBITrinoConnector, many thanks to its creator pichlerpa. The implementation is very easy and simple to use, we only need to put the **.mez** inside the folder for custom connectors of Power BI which, in my case has the path **C:\Users\Usuario\Documents\Power BI Desktop\Custom Connectors**:
 
-Once the NodePort is operational and mapped to the Spark Thrift Server port, we can connect by executing the following inside the Spark driver Pod:
+<img width="1273" height="564" alt="image" src="https://github.com/user-attachments/assets/69797d22-0b91-4666-aa59-b5807c5edec4" />
 
-kubectl exec -it <spark-driver-pod> -- bash
+Once there we can start Power BI and it should automatically detect the custom connector and add it to the list inside the Get Data window:
 
+<img width="1918" height="1012" alt="image" src="https://github.com/user-attachments/assets/6cf5a38c-57f1-4c1f-9dfa-19346bad02f8" />
 
-Then run:
+Then we just have to enter the information about our trino server so the connector can detect it:
 
-spark-submit command.bash
+<img width="1919" height="1011" alt="image" src="https://github.com/user-attachments/assets/f1a17f88-f8f3-4113-b514-8bfbfeee8e57" />
 
+And we will have everything well set when we see the Power BI explorer querying our trino server:
 
-This launches the Spark Thrift Server, making the Hive tables accessible to Power BI Desktop via the Spark connector.
+<img width="1919" height="1020" alt="image" src="https://github.com/user-attachments/assets/706a8eea-4fc0-4275-b335-af6d2117d5fb" />
 
-You can connect using one of the following URLs (depending on the node in your cluster):
+Finally, we can import all tables and add the relationships between the tables to properly shape have the sematic model  
 
-http://192.168.1.150:30000/cliservice
-http://192.168.1.151:30000/cliservice
-http://192.168.1.152:30000/cliservice
-
-
-Once connected, Power BI can directly query and visualize the Hive tables in near real time.
 # Disclaimer
 
 Some security measures have been intentionally simplified or omitted.
