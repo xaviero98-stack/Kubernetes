@@ -1,4 +1,4 @@
-# End-to-end Big Data analytics pipeline for MongoDB operational data 
+# Turning MongoDB Ops Data into Near Real-Time Power BI Insights
 
 Project Objective
 
@@ -2335,20 +2335,48 @@ And we will have everything well set when we see the Power BI explorer querying 
 
 <img width="1919" height="1020" alt="image" src="https://github.com/user-attachments/assets/706a8eea-4fc0-4275-b335-af6d2117d5fb" />
 
-Finally, we can import all tables and add the relationships between the tables to properly shape have the sematic model  
+Finally, we can import all tables and add the relationships between the tables to properly shape the sematic model:
+
+<img width="1919" height="1012" alt="image" src="https://github.com/user-attachments/assets/2a000129-7ee2-4b80-b7f1-d2b24af090e5" />
+
+And finally we can fill the first page of the report with diiferent Power BI **visuals** to take a look at the data.
+
+💡 Note: Since the data is synthetic there's not much to see and results will be fostered by the randomnes of the Python scripts used to generate the data on MongoDB. So there's not much interest on diving deep into the data. Nevertheless, let's see a good starting point to explore this data.
+
+In this report page there a number of things made that help us represent out data better, these consist of:
+
+- A **geographical hierarchy**, namely, cities, inside, regions inside inside countries. Used in the treemap.
+  
+- An **inactive relationship** between 'gold orders' and 'gold suppliers' (Power BI **semantic models** have this limitation to know how to **spread filters across visuals consistently**, we will work only with customers orders). And the subsecuent **blank values** we will have on the treemap that come from all the **quantities on orders_products that come from suppliers instead of customers**. We can see that they are the exact same number of purchases that has no sex because supplier firms have no sex attribute on the second image, we will then just **exclude** them on the page.
+
+  <img width="1919" height="1014" alt="image" src="https://github.com/user-attachments/assets/9a734f57-c596-4349-a7b7-9b7086f1547f" />
+
+  <img width="1328" height="742" alt="image" src="https://github.com/user-attachments/assets/dc8f43e9-8154-4847-b5bd-029b0bad91df" />
+
+  <img width="1474" height="982" alt="image" src="https://github.com/user-attachments/assets/757abbc6-33b8-496c-bb98-18591c9c4651" />
+
+- **Cross-highlighting** occurs from the donut chart and bar chart to the rest of the charts and **cross-filtering** from the treemap also to the rest of the charts when we **drill down** into a specific country/region/city (that is why we use a hierarchy) when is enabled by clicking on it or **cross-highlighting if the drill mode is disabled**. Some examples are selecting men and seeing that they are more relatively present on France and the United States on number of purchases but not in Spain, where women buy more relative to men as we see on the first image, or we could click on Spain with Drill mode enabled as see how Sports products become the most pricey among them all behind furniture products which are otherwise the most expensive outside the specific spanish market.
+
+  <img width="1317" height="734" alt="image" src="https://github.com/user-attachments/assets/b54d5174-91d0-4fa0-b7dd-6701cbaa1b22" />
+
+  
+  <img width="1312" height="734" alt="image" src="https://github.com/user-attachments/assets/9da48afd-f086-44fd-8655-fb8d99139a44" />
+
+
+💡 Note: If you know Power BI you have perhaps noticed that the connector I used **only supports Import mode** on Power BI, that means that all data is **moved from Trino to Power BI** and then Power BI works with the data snapshot it imported disregarding the near real time changes. **¿So where is the near real time I claim?** The truth is that **DirectQuery** mode is perfectly achivable from Trino to Power BI, in fact, Trino is one of the best options to feed BI visualizations in real time. It was just that I didn't found a free way of doing it, but if we are **in a production environment** I've found, at least, **two ways accomplishing it**, we can choose between the managed version of **Trino from Starburst** that has an **out-of-the-box dedicated Power BI connector** on Power BI desktop and the Service I think, or we could use the **ODBC driver from Simba + their custom connector for Trino** that also allows **Direct Query**. But just demonstration purposes a Import mode works just fine.  
+
 
 # Disclaimer
 
 Some security measures have been intentionally simplified or omitted.
 
-This is because, while security is essential in production environments, implementing it here would add unnecessary complexity without much educational value for this project’s main goal: **integration.**
-
-Security practices are **environment-specific**:
+This is because, while security is essential in production environments and I've leveraged the opportunity to learn about TLS encryption, a general robust approach to security would add unnecessary complexity without much educational value for this project’s main goal: **integration.** Besides, security is usually environment specific, for instance:
 
 Kubernetes uses **RBAC rules**.
 
 AWS uses **IAM roles** and **Security Groups**.
 
 Power BI and Microsoft Fabric/Azure use **Microsoft Entra ID** within **Microsoft 365** environments.
- 
+
+And we could continue with Databricks, Snowflake, etc...
 
