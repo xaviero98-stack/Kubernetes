@@ -1,67 +1,42 @@
 # A Turning MongoDB Ops Data into Near Real-Time Power BI Insights on Kubernetes
 
-# Project Objective
+The scope of this project is to learn how to integrate and use different Big Data technologies to create an **end-to-end, production-like data pipeline** inside my **Kubernetes homelab.**
 
-The objective of this project is to learn how to integrate and use different Big Data technologies to create an end-to-end, production-like data pipeline inside my Kubernetes homelab.
-
-Data Architecture
+# Data Architecture
 
 This will be the overall data architecture:
 
 ![Kubernetes architecture](Project.drawio.png)
 
-By the end of the project, we will have an operational database hosted on MongoDB, whose changes are monitored using the Debezium connector for Change Data Capture (CDC) running in Kafka Connect.
-
-Debezium will stream changes into corresponding Kafka topics in real time. Then, Spark will read data from Kafka and write it into the data lakehouse, which is built on MinIO (open-source S3 storage) and Nessie as the catalog.
+By the end of the project, we will have an **operational database hosted on MongoDB**, whose changes are monitored using the **Debezium connector for Change Data Capture (CDC)** running in **Kafka Connect**. Debezium will stream changes into corresponding Kafka topics in **real time**. Then, **Spark** will read data from Kafka and write it into the **data lakehouse**, which is built on **MinIO** (open-source S3 storage), and **Nessie + REST** as the catalogs.
 
 The structure of the lakehouse follows the Medallion architecture pattern:
 
-**- Bronze layer: Raw CDC data ingested from Kafka by Spark Streaming.**
+**- Bronze layer:** Raw CDC data ingested from Kafka by Spark Streaming.
 
-**- Silver layer: Reconstructed database state derived from the bronze layer.**
+**- Silver layer:** Reconstructed database state derived from the bronze layer.
 
-**- Gold layer: Modeled and aggregated data built from the silver layer for analytics.**
+**- Gold layer:** Modeled and aggregated data built from the silver layer for analytics.
 
-⚠️ Note: Power BI can only visualize Hive tables directly. Therefore, the gold layer metadata will be built on top of Hive instead of Nessie + Iceberg. This enables us to use the Power BI Spark connector effectively.
-
-Finally, a Spark Thrift Server will continuously serve data to Power BI through a DirectQuery connection, enabling near real-time analytics with an overall end-to-end data latency of approximately 2–3 minutes, from the moment data is stored in MongoDB to when it is displayed in Power BI visuals.
+Finally, a **Trino** will continuously serve data to **Power BI**, enabling **near real-time analytics** with an overall end-to-end low data latency from the moment data is stored in MongoDB until it is displayed in Power BI visuals.
 
 
+# MongoDB Deployment
 
-# Step 1: Data Generator Schema
+Let's deploy MongoDB inside Kubernetes.
+The most efficient way to do this is by using the **MongoDB Controllers Kubernetes Operator** and then creating a **MongoDBCommunity Custom Resource (CR).**
 
-The first step is to define the synthetic schema for the data generator:
-
-Customers (customer_id, name, email, cell_phone, address, address_id, genre, age)
-
-Suppliers (supplier_id, name, email, cell_phone, address_id)
-
-Addresses (address_id, line_1, city, zip_code, state/region, country)
-
-Orders(order_id, order_date, is_rebate, supplier_id or customer_id, address_id, product_id, product_price, product_quantity)
-
-Products_orders (order_id, product_id, product_price, product_quantity)
-
-
-
-# Step 2: MongoDB Deployment
-
-Next, we deploy MongoDB inside Kubernetes.
-The most efficient way to do this is by using the **MongoDB Controllers Kubernetes Operator** to deploy an instance of the MongoDBCommunity Custom Resource (CR).
-
-This CR provides **high availability**, since each replica runs as a separate Kubernetes Pod. One Pod acts as the **primary instance**, and the others serve as **secondary replicas**, replicating the primary’s state.
-
-The secondary replicas can be configured with either **strong** or **eventual consistency** relative to the primary instance. This is achieved by deploying and configuring the MongoDBCommunity CR as a **ReplicaSet** type.
+This CR provides **high availability**, since each replica runs as a separate Kubernetes Pod. One Pod acts as the **primary instance**, and the others serves as **secondary replica**, replicating the primary’s state. The secondary replica can be configured with either **strong** or **eventual consistency** relative to the primary. This type of deployment is achieved by deploying and configuring the MongoDBCommunity CR as a **ReplicaSet** type.
 
 **Data partitioning** can be achieved either by:
 
 - Deploying a **Sharded Cluster** (requires a paid MongoDB subscription), or
 
-- Deploying multiple ReplicaSets and managing sharding among them manually.
+- Deploying **multiple ReplicaSets** and managing **sharding** among them manually.
 
-Given the size of my cluster (two Raspberry Pi 5s and a VM on my laptop), I chose to deploy a **single ReplicaSet** with two replicas.
+Given the size of my cluster (two Raspberry Pi 5s and a VM on my laptop) and the scope of the project, I chose to deploy a **single ReplicaSet** with two replicas.
 
-This is the configuration used to deploy my MongoDBCommunity CR:
+This is the **configuration** used to deploy my MongoDBCommunity CR:
 
 ```yaml
 # This example deploys a 3 members ReplicaSet with HostPath volumes
@@ -125,11 +100,11 @@ spec:
       roles: # We give this user permissions, in this case, maximum permissions.
         - name: root
           db: admin
-      scramCredentialsSecretName: my-scram # That's I think is the encryption used to store tha users data in admin
+      scramCredentialsSecretName: my-scram # I think that is the encryption used to store the users data in admin
   version: 6.0.5 # That's the mongodb version we are using
 ```
 
-We will also deploy the PVs and a Mongo Express a UI to be able to be able to interact in a simple and easy manner with Mongodb, and the data.
+We will also deploy the **PVs** and a **Mongo Express UI** to be able to interact in a **simple and fast** manner with Mongodb databases and the data.
 
 ```yaml
 apiVersion: apps/v1
@@ -174,10 +149,10 @@ spec:
       targetPort: 8081
   type: NodePort # We make it a NodePort so we can use from outside the kubernetes cluster with my laptops' browser.
 ```
-And for the PVs we have this configurations:
+And for the **PVs** we have this **configurations**:
 
 ```yaml
-# IMPORTANT: Even if we just made PVC types for logs ans data the operator creates 2 replicas with each this these types of PVC, so 4 PVs in total 2 for logs, 2 for data:
+# IMPORTANT: Even if we just made PVC types for logs and data the operator creates 2 replicas with each this these types of PVC, so 4 PVs in total 2 for logs, 2 for data:
 # THE REST OF THE PVS HAVE THE SAME EXACT CRITERIA AS THIS ONE
 apiVersion: v1
 kind: PersistentVolume
@@ -285,7 +260,7 @@ spec:
   volumeMode: Filesystem
 ```
 
-Also, the secret used is this one:
+Also, the **secret** used is this one:
 
 ```yaml
 apiVersion: v1
@@ -298,7 +273,7 @@ stringData:
 ```
 
 
-Lastly, the two nodeport that connect traffic from both mongodb replicas from outside the cluster are this ones:
+Lastly, the two **node ports** that connect traffic from both mongodb replicas from outside the cluster are this ones:
 
 ```yaml
 ---
@@ -347,22 +322,271 @@ After some minutes, you should be seeing something like that:
 
 ![Kubernetes architecture](mongo_running.png)
 
-And we can also enter inside the browser to if Mongo Express works:
+And we can also enter inside the browser to see if Mongo Express works:
 
 
 ![Kubernetes architecture](mongo-express.png)
 
+By the way if use the follwing command:
 
-# Step 3: Data Ingestion
+```bash
+kubectl logs <mongo-express pod> -n mongodb 
+```
 
-Once MongoDB is deployed, we use **Python** to connect to it and insert data.
+You will be able to see that the generic **password and user to access MongoDB Express** is "admin" and "pass".
 
-The generator simulates a **continuous influx** of operational data flowing into MongoDB, which serves as our **operational database**.
-The generator stops after 100 orders to avoid overloading the subsequent Spark jobs. It can be found in this folder under the name 
-synthetic data generator.ipynb
+# Data Generator Schema
+
+The first step is to define the synthetic schema for the **data generator**:
+
+Customers (customer_id, name, email, cell_phone, address, address_id, genre, age)
+
+Suppliers (supplier_id, name, email, cell_phone, address_id)
+
+Addresses (address_id, line_1, city, zip_code, state/region, country)
+
+Orders(order_id, order_date, is_rebate, supplier_id, customer_i, address_id, product_id, product_price, product_quantity)
+
+Products_orders (order_id, product_id, product_price, product_quantity)
+
+This will be achivable using a quick python script running from a pod inside Kubernetes with Jupyter Lab like that:
+
+```python
+%pip install pymongo faker numpy
+
+from pprint import pprint
+import random
+import numpy as np
+from faker import Faker
+import time
+import pymongo
+
+MONGO_URI = "mongodb://my-user:1234@192.168.1.151:31181,192.168.1.151:31182/?replicaSet=mongo"
+# MONGO_URI = "mongodb://my-user:1234@mongo-0.mongo-svc.mongodb.svc.cluster.local:27017,mongo-1.mongo-svc.mongodb.svc.cluster.local:27017/?replicaSet=mongo"
+# YES, THIS TWO ARE EQUIVALENT BUT THE ONE ABOVE CAN BE RUN FROM A POD OR MY LAPTOP 
+# THAT'S BECAUSE I HAVE TWO NODE PORTS POINTING EACH TO ONE OF THE REPLICAS OF THE REPLICASET
+client = pymongo.MongoClient(MONGO_URI)
+
+# Selecciona base de datos y colecciones
+db = client["synthetic"]
+products_col = db["products"]
+orders_col = db["orders"]
+
+print(f"📦 Productos actuales en la colección: {products_col.count_documents({})}")
+
+fakers = {
+    "ES": Faker("es_ES"),
+    "US": Faker("en_US"),
+    "FR": Faker("fr_FR")
+}
+fake_us = Faker("en_US")
+
+product_catalog = [
+    {"product_id": "PROD01", "product_name": "Smartphone XYZ", "category": "Electronics"},
+    {"product_id": "PROD02", "product_name": "Ultrabook Laptop 15\"", "category": "Electronics"},
+    {"product_id": "PROD03", "product_name": "Bluetooth Headphones", "category": "Electronics"},
+    {"product_id": "PROD04", "product_name": "Smartwatch Pro", "category": "Electronics"},
+    {"product_id": "PROD05", "product_name": "55\" 4K Television", "category": "Electronics"},
+    {"product_id": "PROD06", "product_name": "Espresso Coffee Machine", "category": "Home / Kitchen"},
+    {"product_id": "PROD07", "product_name": "Digital Microwave", "category": "Home / Kitchen"},
+    {"product_id": "PROD08", "product_name": "Multi-function Blender", "category": "Home / Kitchen"},
+    {"product_id": "PROD09", "product_name": "Ergonomic Chair", "category": "Furniture / Office"},
+    {"product_id": "PROD10", "product_name": "Modular Desk", "category": "Furniture / Office"},
+    {"product_id": "PROD11", "product_name": "Adjustable LED Lamp", "category": "Furniture / Decor"},
+    {"product_id": "PROD12", "product_name": "3-Seater Sofa", "category": "Furniture / Home"},
+    {"product_id": "PROD13", "product_name": "Mountain Bike", "category": "Sports / Outdoor"},
+    {"product_id": "PROD14", "product_name": "Official Soccer Ball", "category": "Sports / Outdoor"},
+    {"product_id": "PROD15", "product_name": "Hiking Backpack", "category": "Sports / Outdoor"},
+    {"product_id": "PROD16", "product_name": "Sports Sneakers", "category": "Sports / Footwear"},
+    {"product_id": "PROD17", "product_name": "Book “Learning Python”", "category": "Books / Education"},
+    {"product_id": "PROD18", "product_name": "Professional A4 Notebook", "category": "Stationery / Office"},
+    {"product_id": "PROD19", "product_name": "Gel Ink Pen", "category": "Stationery / Office"},
+    {"product_id": "PROD20", "product_name": "School Backpack", "category": "Stationery / Students"},
+    {"product_id": "PROD21", "product_name": "Compact Digital Camera", "category": "Photography"},
+    {"product_id": "PROD22", "product_name": "Adjustable Tripod", "category": "Photography"},
+    {"product_id": "PROD23", "product_name": "Portable LED Flash", "category": "Photography"},
+    {"product_id": "PROD24", "product_name": "Stainless Steel Cookware Set", "category": "Home / Kitchen"},
+    {"product_id": "PROD25", "product_name": "Classic Wristwatch", "category": "Fashion / Accessories"},
+    {"product_id": "PROD26", "product_name": "Polarized Sunglasses", "category": "Fashion / Accessories"},
+    {"product_id": "PROD27", "product_name": "Waterproof Jacket", "category": "Fashion / Clothing"},
+    {"product_id": "PROD28", "product_name": "Thermal Gloves", "category": "Fashion / Clothing"},
+    {"product_id": "PROD29", "product_name": "Unisex Perfume", "category": "Beauty / Cosmetics"},
+    {"product_id": "PROD30", "product_name": "Facial Moisturizer Cream", "category": "Beauty / Cosmetics"},
+]
+
+def products():
+    product_list = []
+    fake = Faker("en_US")
+    for i in product_catalog:
+        product_list.append({ 
+            "product_id": i["product_id"],
+            "product_name": i["product_name"],
+            "product_price": fake.pricetag(),
+            "product_description": fake.sentence(),
+            "product_type": { 
+                "type_id": i["category"][0:4],
+                "type_name": i["category"],
+                "type_description": fake.sentence()
+            }
+        })
+    return product_list
+all_products = products()
+products_col.insert_many(all_products)
+print(f"✅ Insertados {len(all_products)} productos en MongoDB")
+
+def generate_order(ID: int, fake, locale, random_products):
+    is_customer = random.choice([True, False])
+    var = fake.region() if locale != "US" else fake.state()
+    rebate = True if random.random() < 0.01 else False
+    num_products = [{"product_id": prod["product_id"],
+                     "product_price": prod["product_price"],
+                     "product_quantity": random.randint(1, 8)} for prod in random_products]
+    if is_customer:
+        is_male = random.choice([True, False])
+        name = fake.name_male() if is_male else fake.name_female()
+        genre = "Male" if is_male else "Female" 
+        return {
+            "order_id": ID,
+            "order_date": fake.date(),
+            "is_rebate": rebate,
+            "comercial_partner":
+                {
+                "customer_id": f"CUST{ID}",
+                "customer_name": name,
+                "customer_genre": genre,
+                "age": int(np.clip(np.random.normal(35, 15), 15, 100)),
+                "email": fake.free_email(),
+                "cell_phone": fake.phone_number(),
+                "address": {
+                    "address_id": f"ADDR{ID}",
+                    "address_name": fake.address(),
+                    "city": fake.city(),
+                    "zip_code": fake.postcode(),
+                    "state_region": var,
+                    "country": locale
+                }
+            },
+            "products": num_products
+        }
+    else:
+        return {
+            "order_id": ID,
+            "order_date": fake.date(),
+            "is_rebate": rebate,
+                "comercial_partner": 
+                    {
+                    "supplier_id": f"SUPL{ID}",
+                    "supplier_name": fake.company(),
+                    "supplier_email": fake.ascii_company_email(),
+                    "cell_phone": fake.phone_number(),
+                    "address": {
+                        "address_id": f"ADDR{ID}",
+                        "address_name": fake.address(),
+                        "city": fake.city(),
+                        "zip_code": fake.postcode(),
+                        "state_region": var,
+                        "country": locale
+                    }
+            },
+            "products": num_products
+        }
+
+fakers = {
+    "ES": Faker("es_ES"),
+    "US": Faker("en_US"),
+    "FR": Faker("fr_FR")
+}
+fake_us = Faker("en_US")
+
+count = 0
+while count < 100:
+    locale = random.choice(list(fakers.keys()))
+    fake = fakers[locale]
+    random_products = random.sample(all_products, random.randint(1,30))
+    count += 1
+    order = generate_order(count, fake, locale, random_products)
+    orders_col.insert_one(order)
+    time.sleep(0.2)
+    print(f"order nbr {count} uploaded to MongoDB")
+
+def generate_order(ID: int, fake, locale, random_products):
+    is_customer = random.choice([True, False])
+    var = fake.region() if locale != "US" else fake.state()
+    rebate = True if random.random() < 0.01 else False
+    num_products = [{"product_id": prod["product_id"],
+                     "product_price": prod["product_price"],
+                     "product_quantity": random.randint(1, 8)} for prod in random_products]
+    if is_customer:
+        is_male = random.choice([True, False])
+        name = fake.name_male() if is_male else fake.name_female()
+        genre = "Male" if is_male else "Female" 
+        return {
+            "order_id": ID,
+            "order_date": fake.date(),
+            "is_rebate": rebate,
+            "comercial_partner":
+                {
+                "customer_id": f"CUST{ID}",
+                "customer_name": name,
+                "customer_genre": genre,
+                "age": int(np.clip(np.random.normal(35, 15), 15, 100)),
+                "email": fake.free_email(),
+                "cell_phone": fake.phone_number(),
+                "address": {
+                    "address_id": f"ADDR{ID}",
+                    "address_name": fake.address(),
+                    "city": fake.city(),
+                    "zip_code": fake.postcode(),
+                    "state_region": var,
+                    "country": locale
+                }
+            },
+            "products": num_products
+        }
+    else:
+        return {
+            "order_id": ID,
+            "order_date": fake.date(),
+            "is_rebate": rebate,
+                "comercial_partner": 
+                    {
+                    "supplier_id": f"SUPL{ID}",
+                    "supplier_name": fake.company(),
+                    "supplier_email": fake.ascii_company_email(),
+                    "cell_phone": fake.phone_number(),
+                    "address": {
+                        "address_id": f"ADDR{ID}",
+                        "address_name": fake.address(),
+                        "city": fake.city(),
+                        "zip_code": fake.postcode(),
+                        "state_region": var,
+                        "country": locale
+                    }
+            },
+            "products": num_products
+        }
+
+fakers = {
+    "ES": Faker("es_ES"),
+    "US": Faker("en_US"),
+    "FR": Faker("fr_FR")
+}
+fake_us = Faker("en_US")
+
+count = 0
+while count < 100:
+    locale = random.choice(list(fakers.keys()))
+    fake = fakers[locale]
+    random_products = random.sample(all_products, random.randint(1,30))
+    count += 1
+    order = generate_order(count, fake, locale, random_products)
+    orders_col.insert_one(order)
+    time.sleep(0.2)
+    print(f"order nbr {count} uploaded to MongoDB")
+```
 
 
-# Step 4: Kafka, Kafka Connect, and Debezium Setup
+# Kafka, Kafka Connect, and Debezium Setup
 
 Now it’s time to set up **Kafka, Kafka Connect**, and the **Debezium MongoDB connector**.
 
@@ -609,7 +833,7 @@ data: # And this is the exact part of the configmap we use to state the metrics:
       type: GAUGE
 ```
 
-And, as happened with MongoDB we can use **Kafdrop** as a UI to see summarized and general information about the state of the cluster and the data:
+And, as happened with MongoDB we can use **Kafdrop** as a UI to see summarized and general information about the state of **the topics and offsets**:
 
 ```yaml
 apiVersion: apps/v1
@@ -656,15 +880,15 @@ Let's look everything went as expected:
 
 ![Kubernetes architecture](kafka_.png)
 
-And let's see of we can see anything from the broser with **Kafdrop**:
+And let's see if we can see anything from the browser with **Kafdrop**:
 
 ![Kubernetes architecture](kafdrop.png)
 
 Now we can deploy **Kafka Connect**, to do it we will use this yaml:
 
-Custom Image for Kafka Connect
+**Custom Image for Kafka Connect**
 
-A custom image is required because the Debezium connector is a **plugin** that must be placed as a **.jar** file inside the **Kafka Connect** container before it can be referenced via a **KafkaConnector CR**.
+A custom image is required because the Debezium connector is a **plugin** that must be placed as a **.jar** file inside the **Kafka Connect** image before it can be referenced via a **KafkaConnector CR**.
 
 To build this image, we use the following **Dockerfile:**
 
@@ -697,7 +921,7 @@ Now use the **Docker Buildx**:
 cd C:\Users\Usuario\Downloads\Kubernetes\Kakfa\connect docker buildx build --platform linux/amd64,linux/arm64 -t xavier418/kafka:connect-mongo-debezium --push .
 ```
 
-It's important to say that inside my \connect folder I had the **Dockerfile** along with the donwloaded **.jar** so the command could access everything it need. Additionally, notice how I built it for both **amd64** (laptop) and **arm64** (Raspberry Pi) architectures using **Docker Buildx** and my **Docker hub repository** as the place to push it on.
+It's important to say that inside my \connect folder I had the **Dockerfile** along with the donwloaded **.jar** so the command could accessed everything it needed. Additionally, notice how I built it for both **amd64** (laptop) and **arm64** (Raspberry Pi) architectures using **Docker Buildx** (that holds for all the images I 've created during thos project) and my **Docker hub repository** as the place to push it on.
 
 With that finished, now we can create a **KafkaConnect CR**:
 
@@ -749,16 +973,16 @@ And doblecheck:
 
 ![Kubernetes architecture](connector.png)
 
-You should now see on **KafDrop** the **topics** **synthetic.orders** and **synthetic.products** created automatically — each one corresponds to a MongoDB collection with the same name, as per the standard **Debezium** protocol:
+You should now see on **Kafdrop** the **topics** **synthetic.orders** and **synthetic.products** created automatically — each one corresponds to a MongoDB collection with the same name, as per the standard **Debezium** protocol:
 
 ![Kubernetes architecture](topics.png)
 
-And if we enter inside them we will see how these topics contain all the info from the changes in the database, it's important to describe how Debezium works. By default, it extracts the **initial state** of the data and once it have it, it starts **monitoring the changes**, that will be important further on when we reconstruct the state of the data in Spark. 
+And if we enter inside them we will see how these topics contain all the info from the changes in the database, it's important to describe how Debezium works. By default, it extracts the **initial state** of the data and once each document in the collection have been sended thorugh the corresponding Kafka topic it starts **monitoring the changes**, that will be important further on when we reconstruct the state of the data in Spark. 
 
-Also, Kafka Connect can parallelize data production and consumption across Kafka topics, the MongoDB Debezium connector **cannot parallelize** CDC events when MongoDB is deployed as a **ReplicaSet**.
+Also, even though Kafka Connect can parallelize data production and consumption across Kafka topicsusing its partitions, the MongoDB Debezium connector **cannot parallelize** CDC events when MongoDB is deployed as a **ReplicaSet**.
 If you need to scale data ingestion, consider deploying MongoDB as a **Sharded Cluster**, as each shard can have its own Debezium connector instance.
 
-# Step 5: Setting Up the Data Lakehouse Ecosystem
+# Setting Up the Data Lakehouse Ecosystem
 
 Now we will proceed to set up the data lakehouse ecosystem.
 
@@ -878,8 +1102,8 @@ spec:
 ```
 In my case, I have used **static PersistentVolumes (PVs)** with **hostPaths**, where each PV uses a directory on the host node as storage.
 
-Tenants are composed of pools, which in turn are composed of **servers**, and each server can have multiple **volumes** — each corresponding to a separate PV.
-If you use hostPath-based PVs as I did, take into account that **all volumes belonging to a given server must be located on the same node**. This ensures that the Pod created for that server can access all PVs, since they reside on the same node.
+Tenants are composed of **pools**, which in turn are composed of **servers**, and each server can have multiple **volumes** — each corresponding to a separate PV.
+If you use hostPath-based PVs as I did, take into account that **all volumes belonging to a given server must be located on the same node**. This ensures that the Pod created for that server can access all PVs, since they reside on the same node, the one where the pod is deployed.
 
 Of course, for the Tenants to run properly, their **PVCs** need to match with some **PVs** so let's create them:
 
@@ -982,21 +1206,17 @@ spec:
               values:
                 - ubuntu2
 ```
-In my case, I have used static PersistentVolumes (PVs) with hostPaths, where each PV uses a directory on the host node as storage.
 
-Tenants are composed of servers, and each server can have multiple volumes — each corresponding to a separate PV.
-If you use hostPath-based PVs as I did, take into account that all volumes belonging to a given server must be located on the same node. This ensures that the Pod created for that server can access all PVs, since they reside on the same node.
-
-Once we have everyting well set, the kubectl should return us this output:
+Once we have everyting well set, kubectl should return us this output:
 
 ![Kubernetes architecture](minio.png)
 
-We also see how the S3 UI works, to that I use the command:
+We also see how the **MinIO UI** works, for that I use the command:
 
 ```bash
 kubectl edit svc myminio-console -n minio-tenant
 ```
-And inside it I utrn it into a NodePort like this:
+And inside it I turn it into a **NodePort** leaving the service like this:
 
 ```yaml
 apiVersion: v1
@@ -1041,15 +1261,15 @@ status:
 
 Now we can enter the console and see how minio works from the ease of the UI:
 
-Inside the **UI** we can see the objects inside our buckets with the **object browser**:
+Inside the **UI** we can see the objects inside our buckets with the **object browser** (don't worry when you don't see these buckets, they are only test buckets, don't mind them):
 
 ![Kubernetes architecture](minio-console.png)
 
-We can also create new **keys** (the ones we have seen before) that inherit the current user permissions:
+We should also create new **keys** (the ones we have seen before) that inherit the current user permissions:
 
 ![Kubernetes architecture](minio-keys.png)
 
-And finally why can manage **buckets** from here:
+And finally why can manage **buckets** from here, let's create the **synthetic** bucket so we can use it later on:
 
 ![Kubernetes architecture](minio-buckets.png)
 
@@ -1089,9 +1309,9 @@ catalog:
 
 The keys for **accessing MinIO** can be **overrriden** by the Spark-to-S3 confs **"spark.hadoop.fs.s3a.keys"** on the **PySpark** session.
 
-In my setup, storage is backed by **MongoDB as metastore**.
+In my setup, storage is backed by **MongoDB as metastore** for Nessie.
 
-💡 Note: If the Nessie Pod fails and metadata is stored ephemerally (inside the Pod), the next Nessie Pod will **not** be able to retrieve previously created tables, even if the table data persists in S3. That' why we have to use a metadata store as well as a data warehouse on s3. 
+💡 Note: If the Nessie Pod fails and metadata is stored ephemerally (inside the pod), the next Nessie Pod will **not** be able to retrieve previously created tables, even if the table data persists in S3. That's why we have to use a metadata store as well as a data warehouse on s3. 
 
 Once again we change the service to be a Node Port and we can access the **Nessie UI**, for now there are no tables but we will be able to see them once we create them with the nessie catalog:
 
@@ -1149,14 +1369,14 @@ EXPOSE 8888
 # SETS THE WORK DIRECTORY
 WORKDIR /workspace
 
-# ADD MY SQL CONNECTOR (I downloaded and putted it on the same directory on my laptop as the one where the Dockerfile exists, this way ADD using it on the image creation)
+# ADD MY SQL CONNECTOR (I downloaded and putted it on the same directory on my laptop as the one where the Dockerfile exists, this way ADD is including it on the image creation inside /opt/spark/jars/ where spark jars should go)
 ADD mysql-connector-j-8.0.33.jar /opt/spark/jars/
 
 # MAINTAINS THE POD ALIVE BECAUSE IT IS NOT A CLOSED EXECUTION
 CMD ["tail", "-f", "/dev/null"]
 
 
-# WITH THAT CREATED WE SIMULTANEOUSLY CREATE THE IMAGE AND PUSH IT TO A REPOSITORY (in this case mine, xavier418/spark-driver:4.0.0 --push):
+# WITH THAT CREATED WE SIMULTANEOUSLY CREATE THE IMAGE AND PUSH IT TO A REPOSITORY (in this case mine, xavier418/spark-driver):
 ```
 
 This image is also available publicly on my **Docker Hub** repository under the name xavier418/spark-driver:spark-3.5.6-python-3.10 
@@ -1184,7 +1404,7 @@ spec:
         ports:
         - containerPort: 8888
         - containerPort: 7077
-        env: # These env variable are used because they allow us to use an Iceberg REST catalog, further details later on but basically this catalog won't inherit the spark configs for accessing S3, instead in uses the Amazon bundle SDK 2.20 for accessing and this bundle in turn searches for the credentials inside environment variables instead of the spark session itself.  
+        env: # These env variables are used because they allow us to use an Iceberg REST catalog, further details on why we use it later on but basically this catalog won't inherit the spark configs for accessing S3 like Nessie does, instead in uses the Amazon bundle SDK 2.20 for accessing S3 and this bundle in turn searches for the credentials inside environment variables inside the driver and executor pods instead of the spark session itself.  
         - name: AWS_ACCESS_KEY_ID
           value: "wGyHqcx43ZGp86XtqWm8"
         - name: AWS_SECRET_ACCESS_KEY
@@ -1255,7 +1475,7 @@ spec:
       nodePort: 30089
 ```
 
-The image includes **JupyterLab, Spark, and Python** preinstalled, besides the mysql driver since we will use MySQL as metadata store for the Iceberg REST catalog. The Kubernetes Node Ports let us use our browser to look into diiferent Spark components such as **Spark UI, or Jupyter Lab**.
+The image includes **JupyterLab, Spark, and Python** preinstalled, besides the mysql driver since we will use MySQL as metadata store for the Iceberg REST catalog (We don't really use the MySWL driver as said before but I prefer to install it in my image). The Kubernetes **Node Ports** let us use our **browser** to see different Spark components such as **Spark UI, or Jupyter Lab**.
 
 # Accessing JupyterLab
 
@@ -1272,13 +1492,14 @@ jupyter lab --ip=0.0.0.0 --port=8888 --allow-root --no-browser
 ```
 
 This **exposes** JupyterLab through the node port **30088** defined in spark-driver.yaml.
-From any machine on my local network, before doing it, look for the **generated token** on the jupyter lab output and **don't close** the console you are using:
+
+Then look for the **generated token** on the jupyter lab output and copy it. **Don't close** the console, instead open a new one to :
 
 ![Kubernetes architecture](token.png)
 
-This setup allows me to develop and execute Spark notebooks interactively inside Kubernetes from my local environment.
+This setup allows me to develop and execute Spark notebooks interactively inside Kubernetes from my laptop going to http://192.168.1.150:30088.
 
-We just have to open our browser and navigate to the 30088 port of **no matter what node of our Kubernetes cluster** and paste the token, and we will be inside jupyter lab ready to start developing the **PySpark scripts**:
+We just have to open our browser and navigate to the 30088 port of **no matter what node of our Kubernetes cluster** and paste the token, then we will be inside the jupyter lab session ready to start developing the **PySpark scripts**:
 
 ![Kubernetes architecture](jupyter.png)
 
@@ -1611,7 +1832,7 @@ def merge_into_orders_silver(microBatchOutputDF, batchId):
     """)
 """ 
  Hopefully, thanks to the clarity of the MERGE INTO syntax it becomes really clear what we are doing with each micro-batch, what this does is
- Recreating the current state of the orders document in MongoDB in the form of a table. For every MongoDB change, an equivalent change takes place 
+ recreating the current state of the orders document in MongoDB in the form of a table. For every MongoDB change, an equivalent change takes place 
  in this table. 
  Only take into account that if the connector gets disconnected from MongoDB and in that time some data gets deleted, the corresponding rows
  won't be erased from this table, but this can be easily tackled by doing periodic inner joins between this table and a Spark batch job that 
@@ -1757,22 +1978,20 @@ spark.streams.active
 
 spark.stop()
 ```
-You can see the corresponding .ipynb script with it's outputs in this notebook:
-
-![Kubernetes architecture](Bronze+Silver.ipynb)
+This script is thought to be splited in different code cells that encapsulate a complete logical action or a set of logical complete actions, for instance, we could join in a single code cell the creation of both silver tables but then it's convenient to remove the select statements that check if the tables exist and are filled with the data and put these select checkpoints in different code cells that come after the creation of the silver layers in Jupyter Lab. Nevertheless, you can make the logical split in code cells as you want as long as it doesn't produce errors. Also, take into account that the **.stop() commands stop the streams**, you have to run the cells that activate the stream for products_silver and orders_silver table but as long as you want spark to continue streaming don't use any of these two .stop() commands (further details in the script) unless you want spark to stop monitoring the changes from MongoDB. Finally, it's also said in the script but it worths to mention that the when we reach an .awaitTermintation() or .start() command we have to run the code look the the Spark stages advance and then we have to **interrupt the python kernel** executing the Jupyter Lab cell, this will throw a KeyInterrupt Error but the spark streaming will continue, you can double check it running **spark.streams.active**, each written line is a spark stream running and you should have two.
 
 # Gold layer 
 
 Now, it is the time to explain how I have approached the **Gold layer**.
-Up until now we have an arquitecture with two tables, orders_silver and products_silver, that update themselves in **near real time** with microbatches using **Spark Structured Streaming** our goal for the gold layer is simply to **model this data** in these two tables and **shape it** according the **star schema**, the most usual structure **Power BI semantic models** have. Ideally, we also want to **avoid data duplication and reprocessing** of this data one more time to save costs in production while upgrading it from the silver to the gold layer, which would involve yet another Spark stream transporting microbatches from silver Iceberg tables to gold Iceberg tables, let alone the fact that we cannot make CDC changes from these tables using Spark streams, (at least by the time I'm writing that, Iceberg supports creating tables with change awareness by setting a TBL property named capture.changes = 'true' or something alike, but **only works with Spark batches, not with Spark Structured Streaming**). 
+Up until now we have an arquitecture with two tables, orders_silver and products_silver, and they are updated in **near real time** with microbatches using **Spark Structured Streaming** our goal for the gold layer is simply to **model this data** in these two tables and **shape it** according the **star schema**, the most usual structure **Power BI semantic models** have. Ideally, we also want to **avoid data duplication and reprocessing** of this data one more time to save costs in production while upgrading it from the silver to the gold layer, which would involve yet another Spark stream transporting microbatches from silver Iceberg tables to gold hypothetical Iceberg tables, let alone the fact that we cannot make CDC changes from these tables using Spark streams, (at least by the time I'm writing that, Iceberg supports creating tables with change awareness by setting a TBL property named capture.changes = 'true' or something alike, but **only works with Spark batches, not with Spark Structured Streaming**). 
 
 Well, there's a simple and elegant solution that accomplishes everything. **Iceberg Views**:
 
 - They won't duplicate data.
 
-- They have the flexibility required to shape data in according to the **star schema**.
+- They have the flexibility required to shape silver data according to the **star schema**.
 
-- These transformations, as we will see are primarily filters on a subset of columns and/or rows, and if we recall the fact that the **silver tables are partitioned (row-level partition)** and that they store data in **parquet files (column-level partitiong)** means that underlying queries will be very efficient in terms of processing and computing resources.
+- These transformations, as we will see are primarily filters on a subset of columns and/or rows, and if we recall the fact that the **silver tables are partitioned (row-level partition)** and that they store data in **parquet files (column-level partitiong)**, it means that underlying queries will be very efficient in terms of processing and computing resources reading only needed partitions instead of all the data.
 
 This last part of the implementation will require the following additional technologies:
 
@@ -1781,12 +2000,13 @@ This last part of the implementation will require the following additional techn
 - Trino
 - Traefik
 
-Let's explain what they do, Iceberg REST is a layer over another Icerberg catalog that exposes the API and let's us communicate with the underlying catalog using the Iceberg API, in my case, I will use a JDBC catalog under the hood, that's why we will use MySQL it will be the database metastore. 
-Trino is a very popular distributed SQL engine and its purpose consists of being able to run SQL queries over known data lakehouses catalogs such as Nessie or Iceberg REST. It also comes with the hability to create views and tables upon the existing data it sees and store them on the same catalogs it is looking at. 
+Let's explain what they do, Iceberg REST is a layer over a catalog that uses Iceberg tables, in our case a JDBC catalog in MySQL, and exposes the API allowing us to communicate with the underlying catalog using the Iceberg API. 
 
-I think its a good idea to clarify how it is different from Spark because, some of their capabilities certainly overlap to some extent. The focus of Spark lies on **data transformation** it can transform data with using **SQL statements thanks to spark.sql** but we can also use USF's and overall **underlying python environment to use the programatic capabilities** of such a powerful language like loops to iterate while transforming, it can also **transform semistructured data** as we saw like JSONs. On the other hand, Trino is purely SQL-based, and within the scope of what SQL allows, it can transform or create data or views, but it's main purpose is to **unify different data sources under a single SQL-ready environment** and give the **capabilities of a regular relational database** like users, concurrency, TLS encryption, and more.
+**Trino** is a very popular **distributed SQL engine** and its purpose consists of being able to run SQL queries over known data lakehouses catalogs such as Nessie or Iceberg REST. It also comes with the hability to create views and tables upon the existing data it sees and store them on the same catalogs it is looking at. 
 
-**Traefik** is just another service like **nginx** that allows us to use **TLS encryption** for in and outbound traffic for the Kubernetes cluster, it opens us a Load Balancer that will redirect traffic using an Ingress whereby we will access the service from outside the kubernetes cluster. 
+I think its a good idea to clarify how it is different from Spark because, some of their capabilities certainly overlap to some extent. The focus of Spark lies on **data transformation** it can transform data using **SQL statements thanks to spark.sql** but we can also use UDF's and the overall **underlying python environment to use the programatic capabilities** of such a powerful language like loops to iterate while transforming, it can also **transform semi-structured data** as we saw like JSONs. On the other hand, Trino is purely SQL-based, and within the scope of what this Trino SQL allows, it can transform or create data or views, but it's main purpose is to **unify different data sources under a single SQL-ready environment** and give the **capabilities of a regular relational database** like users, concurrency, TLS encryption, and more.
+
+**Traefik** is just another service like **nginx** that allows us to use **TLS encryption** for in and outbound traffic for the Kubernetes cluster, it creates us a Load Balancer that will redirect traffic using an Ingress whereby we will access the service from outside the kubernetes cluster. 
 
 
 # Deploy a relational database to host Iceberg REST metadata
@@ -1797,7 +2017,7 @@ Of course, and let me add that course was plan A, but apparently the **Trino's v
 
 Before we deploy Iceberg we need to deploy MySQL database because Iceberg REST will look for it as soon as it is deployed and will fail if it cannot connect to it.
 
-So, to deploy the databse we do the following 
+So, to deploy the database we do the following 
 💡 Note: The storage ended up being **ephemeral** because this catalog will only store views, not tables, of course Iceberg REST views metadata comes in the form of data inside MySQL but **views are stateless** objects, and I already have a script to generate them in Trino:
 
 ```yaml
@@ -1882,11 +2102,11 @@ spec:
   type: ClusterIP
 ```
 
-You will everything went fine when you see this deployment with kubectl:
+You will know everything went fine when you see this deployment with kubectl:
 
 <img width="891" height="268" alt="image" src="https://github.com/user-attachments/assets/eb1e9e3d-82fd-4053-ad34-c30659bc07ed" />
 
-If you also want to make sure it works you can login using, if you can enter, everything was properly set up:
+If you also want to make sure it works you can also login using the following command on the controlplane, if you can enter, everything was properly set up:
 
 ```bash
  kubectl run mysql-client --rm -it --image=mysql:8.1 -- mysql -h mysql -u iceberg -picebergpass iceberg_catalog
@@ -1964,7 +2184,7 @@ spec:
     targetPort: 8181
   type: ClusterIP
 ```
-As you can see, there's a custom image, this image is the regular iceberg rest image we can find in the official apache/iceberg repo on docker hub, the only difference is that I added the mysql connector to that iceberg can communicate with MySQL deployed on the previous yaml.
+As you can see, there's a custom image, this image is the regular iceberg rest image we can find in the official apache/iceberg repo on docker hub, the only difference is that I added the mysql connector so that iceberg can communicate with MySQL deployed on the previous yaml.
 
 The Dockerfile is the following one:
 
@@ -1978,7 +2198,7 @@ COPY mysql-connector-j-8.1.0.jar /usr/lib/iceberg-rest/
 CMD ["java", "-cp", "iceberg-rest-adapter.jar:mysql-connector-j-8.1.0.jar", "org.apache.iceberg.rest.RESTCatalogServer"]
 ```
 
-You have probably noticed how we **didn't even touch the Iceberg REST catalog** in PySpark code on the **Bronze and Silver layer section**, we didn't even configured the Spark Session to access it. It is because we will only access it through Trino, it is also possible to access **REST catalog with Spark** using this Spark session conf:
+You have probably noticed how we **didn't even touch the Iceberg REST catalog** in PySpark code on the **Bronze and Silver layer section**, we didn't even configure the Spark Session to access it. It is because we will only access it through Trino, it is also possible to access **REST catalog with Spark** using this Spark session configuration if you need or prefer but it's completely optional:
 
 ```python
 from pyspark.sql.functions import to_json, struct, col, expr, row_number, from_json, get_json_object, explode, when, regexp_replace, current_timestamp
@@ -2041,7 +2261,7 @@ Take into account that objects like **DATABASES**, called **SCHEMAS in Trino**, 
 
 # Traefik 
 
-To create we will use the official Helm Chart like that, running this command on the controlplane:
+To deploy it, we will use the official Helm Chart like that, running this command on the controlplane:
 
 ```bash
 helm install traefik traefik/traefik -n traefik --create-namespace
@@ -2051,10 +2271,11 @@ For our use case we don't need to change any of the default values, this will cr
 
 <img width="873" height="238" alt="image" src="https://github.com/user-attachments/assets/eb53f829-e202-4171-94db-62239dd58d29" />
 
+
 # Trino
 
 Now that we have Traefik we can deploy Trino using TLS and Password, it is not really necessary but I thought it was a good exercise and allowed me to familiarize with Kubernetes Load Balancers and TLS encryption. 
-So for TLS encryption we first thing we will use is the following command:
+So for TLS encryption the first thing we will use is the following command:
 
 ```bash
 openssl req -x509 -nodes -days 365 \
@@ -2064,7 +2285,7 @@ openssl req -x509 -nodes -days 365 \
   -subj "/CN=trino.local/O=HomeLab"
 ```
 
-This will generate the certificate **trino.crt** and the key **trino.key**, now we will use them to formulate a **Kubernetes secret** like that:
+This will generate the certificate **trino.crt** and the key **trino.key**, now we will use them to formulate a **Kubernetes secret** like that (we will have to create the trino namespace too):
 
 ```bash
 kubectl create secret tls trino-tls \
@@ -2080,7 +2301,7 @@ kubectl get secret -n trino
 ```
 <img width="652" height="118" alt="image" src="https://github.com/user-attachments/assets/b839131b-556a-4f8d-906d-eac766324575" />
 
-Finally, we can deploy the Trino itself using the oficial Helm Chart, but first, we have to write the values.yaml file, the configuratoin we display on the yaml file is the following one:
+Finally, we can deploy Trino itself using the oficial Helm Chart, but first, we have to write the values.yaml file, the configuratoin we display on the yaml file is the following one:
 
 ```bash
 catalogs:
@@ -2184,7 +2405,7 @@ spec:
                   number: 8080
 ```
 
-Now, one last step before we can use it. In the machine that will be used to connect to Trino we need to go to its hosts file and append a line like with the structure '(one of the Kubernetes nodes IPs)  trino.local'. **Not separated by spaces but by a Tab**. In my case with Windows we find it in **C:\Windows\System32\drivers\etc**:
+Now, one last step before we can use it. In the machine that will be used to connect to Trino we need to go to its hosts file and append a line with the structure '(one of the Kubernetes nodes IPs)  trino.local'. **Not separated by spaces but by a Tab**. In my case with Windows we find it in **C:\Windows\System32\drivers\etc**:
 
 <img width="831" height="803" alt="image" src="https://github.com/user-attachments/assets/4ebe66a0-7fbc-4367-b92e-d618fea68362" />
 
@@ -2192,11 +2413,11 @@ Apparently, it can work with Tab as well as spaces based on the rest of the matc
 
 # Trino client
 
-Now we just have to **download** the trino client and **put it in a folder** like that:
+Now we just have to **download** the trino client and **put it in a folder** like that (easily found in google, just type this name you see on the image, it's in Maven too):
 
 <img width="1242" height="577" alt="image" src="https://github.com/user-attachments/assets/1e14f76b-6fd1-4f22-bf3b-66bf8c8ac4ca" />
 
-I have more things but they are not necessary.
+I have more things on the directory but they are not necessary.
 We will now open a Powershell and go to this directory, inside it we run the next command:
 
 ```sh
@@ -2208,7 +2429,7 @@ Notice how we use *https* instead of *http* because there's TLS encryption. We t
 
 We can see **both catalogs, Nessie and Icerberg REST** with the respective **aliases** we gave them on the **values.yaml** for the Trino Helm Chart, **lakehouse** and **rest**-
 
-💡 Note: It's important to know that **Trino catalogs are composed of SCHEMAS, not DATABASES**, that's how Trino names the environment within which a set of tables exist. With that said, **it's just a question on nomenclature**. These are the same objects and if they are created in Spark, they will then be **visible, accessible, writable/readable, and totally functional** in Trino with the same name that Spark gave them and viceversa.
+💡 Note: It's important to know that **Trino catalogs are composed of SCHEMAS, not DATABASES**, that's how Trino names the environment within which a set of tables exist. With that said, **it's just a question on terminology**. These are the same objects and if they are created in Spark, they will then be **visible, accessible, writable/readable, and totally functional** in Trino with the same name that Spark gave them and viceversa.
 
 That's how it looks like:
 
@@ -2218,7 +2439,7 @@ Don't mind the ERROR, it's just telling us that Trino wasn't capable to format t
 
 # Creating the Gold layer
 
-The creation of the gold layer will be easily performed by using the following SQL statements (I'm not sure if the these chained SQL statement here can act as a script the way they are presented here piled up one after the other, I will make a copy-paste for each statement on the Trino client) inside the client above started:
+The creation of the gold layer will be easily performed by using the following SQL statements (I'm not sure if the these chained SQL statement here can act as a script the way they are presented here piled up one after the other), I will make a copy-paste for each statement on the Trino client above started:
 
 ```sql
 CREATE OR REPLACE VIEW rest.gold.addresses AS
@@ -2317,7 +2538,7 @@ That would conclude the Golden layer and we can now start talking about the conn
 
 # Connecting Trino to Power BI
 
-There are several specific ways to connect Trino to Power BI but all of them can fall into one of these two categories, either we use a **custom connector** or we use an **ODBC/JDBC driver** for Trino and then use it to create a **DSN (Data Source Names)**, then we can use it inside the generic out-of-the-box ODBC connector Power BI comes with. We will use the **custom connector** approach, it is simpler and more direct.  
+There are several specific ways to connect Trino to Power BI but all of them can fall into one of these two categories, either we use a **custom connector** or we use an **ODBC/JDBC driver** and then use it to create a **DSN (Data Source Names)** for Trino, then we can use it inside the generic out-of-the-box ODBC connector Power BI comes with. We will use the **custom connector** approach, it is simpler and more direct.  
 
 The specific custom connector we will use us the one from https://github.com/CreativeDataEU/PowerBITrinoConnector, many thanks to its creator pichlerpa. The implementation is very easy and simple to use, we only need to put the **.mez** inside the folder for custom connectors of Power BI which, in my case has the path **C:\Users\Usuario\Documents\Power BI Desktop\Custom Connectors**:
 
@@ -2345,9 +2566,9 @@ And finally we can fill the first page of the report with diiferent Power BI **v
 
 In this report page there a number of things made that help us represent out data better, these consist of:
 
-- A **geographical hierarchy**, namely, cities, inside, regions inside inside countries. Used in the treemap.
+- A **geographical hierarchy**, namely, cities inside regions, inside countries. Used in the treemap.
   
-- An **inactive relationship** between 'gold orders' and 'gold suppliers' (Power BI **semantic models** have this limitation to know how to **spread filters across visuals consistently**, we will work only with customers orders). And the subsecuent **blank values** we will have on the treemap that come from all the **quantities on orders_products that come from suppliers instead of customers**. We can see that they are the exact same number of purchases that has no sex because supplier firms have no sex attribute on the second image, we will then just **exclude** them on the page.
+- An **inactive relationship** between 'gold orders' and 'gold suppliers' (Power BI **semantic models** have this limitation to know how to **spread filters across visuals consistently**, we will work only with customers orders). But then we will have to tackle the subsecuent **blank values** we will have on the treemap that come from all the **quantities on orders_products that come from suppliers instead of customers**. We can see that they are the exact same number of purchases that has no sex because supplier firms have no sex attribute on the second image, we will then just **exclude** them on the page.
 
   <img width="1919" height="1014" alt="image" src="https://github.com/user-attachments/assets/9a734f57-c596-4349-a7b7-9b7086f1547f" />
 
@@ -2355,7 +2576,7 @@ In this report page there a number of things made that help us represent out dat
 
   <img width="1474" height="982" alt="image" src="https://github.com/user-attachments/assets/757abbc6-33b8-496c-bb98-18591c9c4651" />
 
-- **Cross-highlighting** occurs from the donut chart and bar chart to the rest of the charts and **cross-filtering** from the treemap also to the rest of the charts when we **drill down** into a specific country/region/city (that is why we use a hierarchy) when is enabled by clicking on it or **cross-highlighting if the drill mode is disabled**. Some examples are selecting men and seeing that they are more relatively present on France and the United States on number of purchases but not in Spain, where women buy more relative to men as we see on the first image, or we could click on Spain with Drill mode enabled as see how Sports products become the most pricey among them all behind furniture products which are otherwise the most expensive outside the specific spanish market.
+- **Cross-highlighting** occurs from the donut chart and bar chart to the rest of the charts and **cross-filtering** from the treemap also to the rest of the charts when we **drill down** into a specific country/region/city (that is why we use a hierarchy) when Drill Mode is enabled for the treemap by clicking on it or **cross-highlighting if the drill mode is disabled**. Some examples are selecting men and seeing that they are more relatively present on France and the United States on number of purchases but not in Spain, where women buy more relative to men as we see on the first image, or we could click on Spain with Drill mode enabled as see how Sports products become the most pricey among them all even beyond furniture products which are otherwise the most expensive products on average outside the specific spanish market (the prices are in the region of milions because of the initial Python script that generated the data, but again since its synthetic data it is not a problem).
 
   <img width="1317" height="734" alt="image" src="https://github.com/user-attachments/assets/b54d5174-91d0-4fa0-b7dd-6701cbaa1b22" />
 
@@ -2363,20 +2584,20 @@ In this report page there a number of things made that help us represent out dat
   <img width="1312" height="734" alt="image" src="https://github.com/user-attachments/assets/9da48afd-f086-44fd-8655-fb8d99139a44" />
 
 
-💡 Note: If you know Power BI you have perhaps noticed that the connector I used **only supports Import mode** on Power BI, that means that all data is **moved from Trino to Power BI** and then Power BI works with the data snapshot it imported disregarding the near real time changes. **¿So where is the near real time I claim?** The truth is that **DirectQuery** mode is perfectly achivable from Trino to Power BI, in fact, Trino is one of the best options to feed BI visualizations in real time. It was just that I didn't found a free way of doing it, but if we are **in a production environment** I've found, at least, **two ways accomplishing it**, we can choose between the managed version of **Trino from Starburst** that has an **out-of-the-box dedicated Power BI connector** on Power BI desktop and the Service I think, or we could use the **ODBC driver from Simba + their custom connector for Trino** that also allows **Direct Query**. But just demonstration purposes a Import mode works just fine.  
+💡 Note: If you know Power BI you have perhaps noticed that the connector I used **only supports Import mode** on Power BI, that means that all data is **moved from Trino to Power BI** and then Power BI works with the data snapshot it imported disregarding the near-real-time changes. **¿So where is the near real time I claim?** The truth is that **DirectQuery** mode is perfectly achivable from Trino to Power BI, in fact, Trino is one of the best options to feed BI visualizations in real time to a wide variety of BI tools such as SuperSet, Tableau and many others. It was just that I didn't found a free way of doing it, but if we are **in a production environment** I've found, at least, **two ways of accomplishing it** (and one of them requieres even less steps than the Trino connector I used), we can choose between the managed version of **Trino from Starburst** that has an **out-of-the-box dedicated Power BI connector** on Power BI desktop and the Service I think, or we could use the **ODBC driver from Simba + their custom connector for Trino** that also allows **Direct Query**. But just for demonstration purposes a the Import mode works just fine. I have also seen that there's a third way also based on **ODBC drivers from ZappySys** so in production there's a sutable solution for everyone. 
 
 
 # Disclaimer
 
 Some security measures have been intentionally simplified or omitted.
 
-This is because, while security is essential in production environments and I've leveraged the opportunity to learn about TLS encryption, a general robust approach to security would add unnecessary complexity without much educational value for this project’s main goal: **integration.** Besides, security is usually environment specific, for instance:
+This is because, while security is essential in production environments and, as a matter of fact, I've leveraged the opportunity to learn about TLS encryption, a general robust approach to security would add unnecessary complexity without much educational value for this project’s main goal: **integration.** Besides, security is usually environment specific, for instance:
 
-Kubernetes uses **RBAC rules**.
+Kubernetes uses **RBAC rules, secrets**, etc...
 
-AWS uses **IAM roles** and **Security Groups**.
+AWS uses **IAM roles, Security Groups, Keys** among others.
 
 Power BI and Microsoft Fabric/Azure use **Microsoft Entra ID** within **Microsoft 365** environments.
 
-And we could continue with Databricks, Snowflake, etc...
+And we could continue with **Databricks, Snowflake**, etc...
 
