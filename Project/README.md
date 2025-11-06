@@ -1,6 +1,6 @@
 # A Turning MongoDB Ops Data into Near Real-Time Power BI Insights on Kubernetes
 
-Project Objective
+# Project Objective
 
 The objective of this project is to learn how to integrate and use different Big Data technologies to create an end-to-end, production-like data pipeline inside my Kubernetes homelab.
 
