@@ -2620,6 +2620,8 @@ Diving deeper into the last message we see that the Value part of the offset in 
 
 <img width="1919" height="1074" alt="image" src="https://github.com/user-attachments/assets/850e946a-b713-4164-8ee9-d24d93cff429" />
 
+And finally, we can see something interesting here, it turns out empty views are not supported leaving them in that state leaves us stranded with a warning from Power BI:
+
 <img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/bdfb6672-61b8-4f82-a948-6c751d627af6" />
 
 
