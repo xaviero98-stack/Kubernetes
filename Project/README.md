@@ -2586,6 +2586,29 @@ In this report page there a number of things made that help us represent out dat
 
 💡 Note: If you know Power BI you have perhaps noticed that the connector I used **only supports Import mode** on Power BI, that means that all data is **moved from Trino to Power BI** and then Power BI works with the data snapshot it imported disregarding the near-real-time changes. **¿So where is the near real time I claim?** The truth is that **DirectQuery** mode is perfectly achivable from Trino to Power BI, in fact, Trino is one of the best options to feed BI visualizations in real time to a wide variety of BI tools such as SuperSet, Tableau and many others. It was just that I didn't found a free way of doing it, but if we are **in a production environment** I've found, at least, **two ways of accomplishing it** (and one of them requieres even less steps than the Trino connector I used), we can choose between the managed version of **Trino from Starburst** that has an **out-of-the-box dedicated Power BI connector** on Power BI desktop and the Service I think, or we could use the **ODBC driver from Simba + their custom connector for Trino** that also allows **Direct Query**. But just for demonstration purposes a the Import mode works just fine. I have also seen that there's a third way also based on **ODBC drivers from ZappySys** so in production there's a sutable solution for everyone. 
 
+# End-to-end performance test
+
+Let's now make some changes on the MongoDB database and see all the **triggered processes**. I also find it very **clarifying** because it helps see how each piece **contributes** to the process. First, let's see the state of the orders_silver table for instace:
+
+<img width="1916" height="1079" alt="image" src="https://github.com/user-attachments/assets/3ed0448e-0018-4e65-870b-8797bfacaae5" />
+
+Now since it's a large table in terms of columns the format the sparks display get's distorted, it's not important, because what we are going to do now is just erasing all the orders on MongoDB and see how Spark responds in real time and removes all rows:
+
+<img width="1918" height="1078" alt="image" src="https://github.com/user-attachments/assets/6472628f-8a9b-43e7-b52c-5d240684a3ff" />
+
+<img width="1919" height="1062" alt="image" src="https://github.com/user-attachments/assets/7c16ed54-e656-47d1-9403-b992812561e7" />
+
+<img width="1919" height="1072" alt="image" src="https://github.com/user-attachments/assets/5f7e51dc-7090-4aab-a569-6fb861ae6311" />
+
+<img width="1919" height="1018" alt="image" src="https://github.com/user-attachments/assets/a6175a0d-abfc-4793-a65c-6e51600e8c44" />
+
+<img width="1919" height="1074" alt="image" src="https://github.com/user-attachments/assets/850e946a-b713-4164-8ee9-d24d93cff429" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/29f1a10c-14fc-44cd-bea3-96da865de2a1" />
+
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/bdfb6672-61b8-4f82-a948-6c751d627af6" />
+
+
 
 # Disclaimer
 
