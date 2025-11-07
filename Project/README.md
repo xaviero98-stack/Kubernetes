@@ -2624,9 +2624,11 @@ And finally, we can see something interesting here, it turns out empty views are
 
 <img width="1917" height="1012" alt="image" src="https://github.com/user-attachments/assets/6971d408-fb0c-4760-a883-b67619159edc" />
 
-Let's be a bit more rigorous and use use the Data Navigator from Power BI to take a look at what Power BI sees. As we can see on the pictures below there's nothing, it is empty no matter what columns table we look on, that explains why **age** was the column that Power BI didn't find, it looked on alphabetical orders and **age was, therefore, the first it looked**, It could have happened the same for product_quantity column:
+Let's be a bit more rigorous and use use the Data Navigator from Power BI to take a look at what Power BI sees. As we can see on the pictures below there's nothing, it is empty no matter what tables we look, that explains why **age** was the column that Power BI didn't find, it looked on alphabetical order and **age was, therefore, the first it looked**, It could have happened the same for product_quantity column:
 
 <img width="1919" height="1076" alt="image" src="https://github.com/user-attachments/assets/e5e2fd4d-8064-478c-8ed0-fceceadb4363" />
+
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/41a8e4ce-7cbd-47e1-b0f4-80ac53f40615" />
 
 Overall, we can see how the arquitecture is perfectly functional.
 
