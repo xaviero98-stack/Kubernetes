@@ -2592,19 +2592,33 @@ Let's now make some changes on the MongoDB database and see all the **triggered 
 
 <img width="1916" height="1079" alt="image" src="https://github.com/user-attachments/assets/3ed0448e-0018-4e65-870b-8797bfacaae5" />
 
+
 Now since it's a large table in terms of columns the format the sparks display get's distorted, it's not important, because what we are going to do now is just erasing all the orders on MongoDB and see how Spark responds in real time and removes all rows:
+
 
 <img width="1918" height="1078" alt="image" src="https://github.com/user-attachments/assets/6472628f-8a9b-43e7-b52c-5d240684a3ff" />
 
+See how Spark instantly sees the correction and starts working (the output of the advancing spark stages cwill appear on the last run python cell instead of the cell that started the spark streaming, that's why are seeing it below the spark.strems-active cell).
+
 <img width="1919" height="1062" alt="image" src="https://github.com/user-attachments/assets/7c16ed54-e656-47d1-9403-b992812561e7" />
+
+
+As you can see, now the table is empty in contrast with what see saw on the first picture of this table.
+
 
 <img width="1919" height="1072" alt="image" src="https://github.com/user-attachments/assets/5f7e51dc-7090-4aab-a569-6fb861ae6311" />
 
+
+Now let's dig a bit and see the trace this removal left. Firstly, we can see how Kafka csptured the change comming from Kafka Connect, thanks to debezium.
+
+
 <img width="1919" height="1018" alt="image" src="https://github.com/user-attachments/assets/a6175a0d-abfc-4793-a65c-6e51600e8c44" />
 
-<img width="1919" height="1074" alt="image" src="https://github.com/user-attachments/assets/850e946a-b713-4164-8ee9-d24d93cff429" />
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/29f1a10c-14fc-44cd-bea3-96da865de2a1" />
+Diving deeper into the last message we see that the Value part of the offset in Kafka makes sense according to what we did. In **payload.after** we see the actual document from MongoDB that was erased, **payload.op** is **r** which means removed along with more data like the ts_ms, etc... 
+
+
+<img width="1919" height="1074" alt="image" src="https://github.com/user-attachments/assets/850e946a-b713-4164-8ee9-d24d93cff429" />
 
 <img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/bdfb6672-61b8-4f82-a948-6c751d627af6" />
 
